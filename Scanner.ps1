@@ -1,30 +1,29 @@
 function Show-Menu {
     Clear-Host
 
-    Write-Host "╔════════════════════════════════════════════╗" -ForegroundColor DarkCyan
-    Write-Host "║          PEXWY FORENSICS SCANNER          ║" -ForegroundColor Cyan
-    Write-Host "╠════════════════════════════════════════════╣" -ForegroundColor DarkCyan
-    Write-Host "║ [1] Services                              ║" -ForegroundColor White
-    Write-Host "║ [2] DoomsDay Detector                     ║" -ForegroundColor White
-    Write-Host "║                                          ║"
-    Write-Host "║ [0] Exit                                 ║" -ForegroundColor DarkGray
-    Write-Host "╚════════════════════════════════════════════╝" -ForegroundColor DarkCyan
+    Write-Host ""
+    Write-Host "========================================================" -ForegroundColor DarkCyan
+    Write-Host "                PEXWY FORENSICS SCANNER" -ForegroundColor Cyan
+    Write-Host "========================================================" -ForegroundColor DarkCyan
+    Write-Host ""
+    Write-Host "  [1] Services" -ForegroundColor White
+    Write-Host "  [2] DoomsDay Detector" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  [0] Exit" -ForegroundColor DarkGray
     Write-Host ""
 }
 
-while ($true)
-{
+while ($true) {
     Show-Menu
 
     $choice = Read-Host "Select an option"
 
-    switch ($choice)
-    {
-        "1"
-        {
+    switch ($choice) {
+
+        "1" {
             Clear-Host
             Write-Host ""
-            Write-Host "Launching Services..." -ForegroundColor Green
+            Write-Host "[+] Launching Services..." -ForegroundColor Green
             Write-Host ""
 
             Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/main/Services.ps1')
@@ -33,11 +32,10 @@ while ($true)
             Read-Host "Press ENTER to return to the menu"
         }
 
-        "2"
-        {
+        "2" {
             Clear-Host
             Write-Host ""
-            Write-Host "Launching DoomsDay Detector..." -ForegroundColor Green
+            Write-Host "[+] Launching DoomsDay Detector..." -ForegroundColor Green
             Write-Host ""
 
             Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/main/DoomsDayDetector.ps1')
@@ -46,15 +44,17 @@ while ($true)
             Read-Host "Press ENTER to return to the menu"
         }
 
-        "0"
-        {
+        "0" {
+            Clear-Host
+            Write-Host ""
+            Write-Host "Thank you for using Pexwy Forensics Scanner." -ForegroundColor Cyan
+            Start-Sleep 1
             break
         }
 
-        default
-        {
+        default {
             Write-Host ""
-            Write-Host "Invalid selection." -ForegroundColor Red
+            Write-Host "[!] Invalid selection." -ForegroundColor Red
             Start-Sleep 1.5
         }
     }
