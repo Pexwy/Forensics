@@ -1,97 +1,33 @@
-# =======================
-# TOOLS COLLECTOR
-# =======================
+# Create the tools folder
+$toolsFolder = "C:\tools"
 
+if (!(Test-Path $toolsFolder)) {
+    New-Item -ItemType Directory -Path $toolsFolder | Out-Null
+    Write-Host "Created folder: $toolsFolder" -ForegroundColor Green
+}
+else {
+    Write-Host "Folder already exists: $toolsFolder" -ForegroundColor Yellow
+}
 
+if (!(Test-Path $toolsFolder)) {
+    New-Item -ItemType Directory -Path $toolsFolder | Out-Null
+    Write-Host "Created folder: $toolsFolder" -ForegroundColor Green
+} else {
+    Write-Host "Folder already exists: $toolsFolder" -ForegroundColor Yellow
+}
+
+# Ask for confirmation
+$response = Read-Host "Start downloading all tools? (Y/N)"
+
+if ($response -notmatch '^[Yy]$') {
+    Write-Host "Download cancelled."
+    exit
+}
+
+# Enable TLS 1.2
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-cls
-Write-Host ""
-Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "          TOOLS COLLECTOR            " -ForegroundColor Green
-Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host " Made By Java | Ported from Unknown <3  " -ForegroundColor DarkGray
-Write-Host ""
-
-
-if (-not ([Security.Principal.WindowsPrincipal] `
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-
-    Write-Host "Restarting as administrator..." -ForegroundColor Yellow
-    Start-Process powershell -Verb RunAs -ArgumentList `
-        "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Definition)`""
-    exit 0
-}
-
-
-$root = "C:\"
-$name = "SS"
-$i = 1
-while (Test-Path "$root$name$i") { $i++ }
-$folder = "$root$name$i"
-
-New-Item -Path $folder -ItemType Directory -Force | Out-Null
-Set-Location $folder
-Write-Host "[+] Created folder: $folder" -ForegroundColor Cyan
-
-
-function Add-DefenderExclusion {
-    Write-Host "[*] Adding Windows Defender exclusion..." -ForegroundColor Cyan
-    try {
-        if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
-            $prefs = (Get-MpPreference).ExclusionPath
-            if ($prefs -notcontains $folder) {
-                Add-MpPreference -ExclusionPath $folder
-                Write-Host "[✓] Defender exclusion added" -ForegroundColor Green
-            }
-            return
-        }
-    } catch {}
-
-    try {
-        $reg = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths"
-        if (Test-Path $reg) {
-            New-ItemProperty -Path $reg -Name $folder -Value 0 -PropertyType DWORD -Force | Out-Null
-            Write-Host "[✓] Defender exclusion added (registry)" -ForegroundColor Green
-            return
-        }
-    } catch {}
-
-    Write-Host "[!] Could not add Defender exclusion" -ForegroundColor Yellow
-}
-Add-DefenderExclusion
-
-
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-
-
-function Download-File {
-    param ([string]$Url)
-
-    $fileName = Split-Path $Url -Leaf
-    $dest = Join-Path $folder $fileName
-
-    try {
-        Invoke-WebRequest -Uri $Url -OutFile $dest -UseBasicParsing
-        Write-Host "[✓] Downloaded: $fileName" -ForegroundColor Green
-
-        if ($fileName.ToLower().EndsWith(".zip")) {
-            $outDir = Join-Path $folder ([IO.Path]::GetFileNameWithoutExtension($fileName))
-            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($dest, $outDir, $true)
-            Remove-Item $dest -Force
-            Write-Host "    Extracted → $outDir" -ForegroundColor DarkCyan
-        }
-    }
-    catch {
-        Write-Host "[✗] Failed: $fileName" -ForegroundColor Red
-    }
-}
-
-# -----------------------
 # URLs
-# -----------------------
 $urls = @(
     'https://github.com/spokwn/BAM-parser/releases/download/v1.2.9/BAMParser.exe',
     'https://github.com/spokwn/Tool/releases/download/v1.1.3/espouken.exe',
@@ -131,21 +67,51 @@ $urls = @(
     'https://github.com/zodiacon/AllTools/raw/master/NtfsStreams.zip',
     'https://api.anticheat.ac/dl/cli',
     'https://github.com/Orbdiff/JARParser/releases/download/v1.2/JARParser.exe',
-    'https://github.com/Orbdiff/DPS-Analyzer',
+    'https://github.com/Orbdiff/DPS-Analyzer/releases/download/v1.1/dpsanalyzer.exe',
     'https://github.com/Orbdiff/BAMReveal/releases/download/v1.3/BAMReveal.exe',
     'https://github.com/Orbdiff/CheckDeletedUSN/releases/download/v0.2.1/CheckDeletedUSN.exe',
     'https://github.com/Orbdiff/BAM-CheckRestart/releases/download/v2.0.2/BAMCheckRestart.exe'
-    )
+)
 
-
-$counter = 0
 $total = $urls.Count
 
-foreach ($url in $urls) {
-    $counter++
-    Write-Host "`n[$counter/$total] $(Split-Path $url -Leaf)" -ForegroundColor Cyan
-    Download-File $url
+Write-Host ""
+Write-Host "Downloading $total files..." -ForegroundColor Cyan
+Write-Host ""
+
+for ($i = 0; $i -lt $total; $i++) {
+
+    $current = $i + 1
+    $url = $urls[$i]
+
+    try {
+        $uri = [System.Uri]$url
+        $fileName = [System.IO.Path]::GetFileName($uri.AbsolutePath)
+
+        if ([string]::IsNullOrWhiteSpace($fileName)) {
+            $fileName = "download_$current"
+        }
+
+        if ($fileName -notmatch '\.') {
+            $fileName += ".html"
+        }
+
+        $destination = Join-Path $toolsFolder $fileName
+
+        Write-Host "[$current/$total] Downloading $fileName..." -ForegroundColor Cyan
+
+        Invoke-WebRequest -Uri $url -OutFile $destination -UseBasicParsing
+
+        Write-Host "[$current/$total] Complete" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "[$current/$total] Failed: $fileName" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Yellow
+    }
 }
 
-Start-Process explorer.exe $folder
-Write-Host "`n[✓] Finished" -ForegroundColor Green
+Write-Host ""
+Write-Host "=========================================" -ForegroundColor Green
+Write-Host "        Download Finished!" -ForegroundColor Green
+Write-Host "=========================================" -ForegroundColor Green
+Write-Host "Files saved to: $toolsFolder" -ForegroundColor Cyan
