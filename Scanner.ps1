@@ -1,39 +1,61 @@
-Clear-Host
+function Show-Menu {
+    Clear-Host
 
-while ($true) {
+    Write-Host "╔════════════════════════════════════════════╗" -ForegroundColor DarkCyan
+    Write-Host "║          PEXWY FORENSICS SCANNER          ║" -ForegroundColor Cyan
+    Write-Host "╠════════════════════════════════════════════╣" -ForegroundColor DarkCyan
+    Write-Host "║ [1] Services                              ║" -ForegroundColor White
+    Write-Host "║ [2] DoomsDay Detector                     ║" -ForegroundColor White
+    Write-Host "║                                          ║"
+    Write-Host "║ [0] Exit                                 ║" -ForegroundColor DarkGray
+    Write-Host "╚════════════════════════════════════════════╝" -ForegroundColor DarkCyan
     Write-Host ""
-    Write-Host "========== FORENSICS SCANNER ==========" -ForegroundColor Cyan
-    Write-Host "1 - Services"
-    Write-Host "2 - DoomsDayDetector"
-    Write-Host "0 - Exit"
-    Write-Host ""
+}
+
+while ($true)
+{
+    Show-Menu
 
     $choice = Read-Host "Select an option"
 
-    switch ($choice) {
-        "1" {
+    switch ($choice)
+    {
+        "1"
+        {
             Clear-Host
-            Write-Host "Running Services..." -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Launching Services..." -ForegroundColor Green
+            Write-Host ""
+
             Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/main/Services.ps1')
+
+            Write-Host ""
+            Read-Host "Press ENTER to return to the menu"
         }
 
-        "2" {
+        "2"
+        {
             Clear-Host
-            Write-Host "Running DoomsDayDetector..." -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Launching DoomsDay Detector..." -ForegroundColor Green
+            Write-Host ""
+
             Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/main/DoomsDayDetector.ps1')
+
+            Write-Host ""
+            Read-Host "Press ENTER to return to the menu"
         }
 
-        "0" {
-            Write-Host "Exiting..."
+        "0"
+        {
             break
         }
 
-        default {
-            Write-Host "Invalid option." -ForegroundColor Red
+        default
+        {
+            Write-Host ""
+            Write-Host "Invalid selection." -ForegroundColor Red
+            Start-Sleep 1.5
         }
     }
-
-    Write-Host ""
-    Read-Host "Press Enter to return to the menu"
-    Clear-Host
 }
