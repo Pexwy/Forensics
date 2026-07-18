@@ -8,12 +8,14 @@ function Show-Menu {
     Write-Host ""
     Write-Host "  [1] Services" -ForegroundColor White
     Write-Host "  [2] DoomsDay Detector" -ForegroundColor White
+    Write-Host "  [3] Tools Collector [MINECRAFT]" -ForegroundColor White
     Write-Host ""
     Write-Host "  [0] Exit" -ForegroundColor DarkGray
     Write-Host ""
 }
 
 while ($true) {
+
     Show-Menu
 
     $choice = Read-Host "Select an option"
@@ -26,7 +28,7 @@ while ($true) {
             Write-Host "[+] Launching Services..." -ForegroundColor Green
             Write-Host ""
 
-            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/main/Services.ps1')
+            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Services.ps1')
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
@@ -38,7 +40,19 @@ while ($true) {
             Write-Host "[+] Launching DoomsDay Detector..." -ForegroundColor Green
             Write-Host ""
 
-            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/main/DoomsDayDetector.ps1')
+            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/DoomsDayDetector.ps1')
+
+            Write-Host ""
+            Read-Host "Press ENTER to return to the menu"
+        }
+
+        "3" {
+            Clear-Host
+            Write-Host ""
+            Write-Host "[+] Launching Tools Collector [MINECRAFT]..." -ForegroundColor Green
+            Write-Host ""
+
+            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Tools%20Collector.ps1')
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
@@ -47,7 +61,7 @@ while ($true) {
         "0" {
             Clear-Host
             Write-Host ""
-            Write-Host "Thank you for using Pexwy Forensics Scanner." -ForegroundColor Cyan
+            Write-Host "Thank you for using Pexwy Forensics Scanner!" -ForegroundColor Cyan
             Start-Sleep 1
             break
         }
