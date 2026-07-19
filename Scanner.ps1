@@ -10,6 +10,7 @@ function Show-Menu {
     Write-Host "  [2] DoomsDay Detector" -ForegroundColor White
     Write-Host "  [3] Tools Collector [MINECRAFT]" -ForegroundColor White
     Write-Host "  [4] Alt-Detector" -ForegroundColor White
+    Write-Host "  [5] Mod-Analyzer" -ForegroundColor White
     Write-Host ""
     Write-Host "  [0] Exit" -ForegroundColor DarkGray
     Write-Host ""
@@ -63,10 +64,22 @@ while ($true) {
         "4" {
             Clear-Host
             Write-Host ""
-            Write-Host "[+] Launching Alt-Detecor..." -ForegroundColor Green
+            Write-Host "[+] Launching Alt Detecor..." -ForegroundColor Green
             Write-Host ""
 
             Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Alt-Detector.ps1')
+
+            Write-Host ""
+            Read-Host "Press ENTER to return to the menu"
+        }
+        
+                "5" {
+            Clear-Host
+            Write-Host ""
+            Write-Host "[+] Launching Mod Analyzer..." -ForegroundColor Green
+            Write-Host ""
+
+            powershell -Command "Set-ExecutionPolicy Bypass -Scope Process; Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1')"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
