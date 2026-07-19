@@ -3,7 +3,7 @@ function Show-Menu {
 
     Write-Host ""
     Write-Host "========================================================" -ForegroundColor DarkCyan
-    Write-Host "                PEXWY FORENSICS SCANNER" -ForegroundColor Cyan
+    Write-Host "                ScreenShare Scripts " -ForegroundColor Cyan
     Write-Host "========================================================" -ForegroundColor DarkCyan
     Write-Host ""
     Write-Host "  [1] Services Status" -ForegroundColor White
