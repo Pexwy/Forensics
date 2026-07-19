@@ -9,8 +9,8 @@ function Show-Menu {
     Write-Host "  [1] Services Status" -ForegroundColor White
     Write-Host "  [2] DoomsDay Detector" -ForegroundColor White
     Write-Host "  [3] Tools Collector [MINECRAFT]" -ForegroundColor White
-    Write-Host "  [4] Alt-Detector" -ForegroundColor White
-    Write-Host "  [5] Mod-Analyzer" -ForegroundColor White
+    Write-Host "  [4] Alt Detector" -ForegroundColor White
+    Write-Host "  [5] Mod Analyzer" -ForegroundColor White
     Write-Host "  [6] Services Manager" -ForegroundColor White
     Write-Host ""
     Write-Host "  [0] Exit" -ForegroundColor DarkGray
