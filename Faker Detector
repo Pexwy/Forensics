@@ -1,0 +1,1197 @@
+<#
+
+DESCRIPTION
+    Hybrid VM and Hotspot Detection Script - Combines VMAware techniques with FakerDetector
+    Analyzes WiFi connections, hotspot usage, network activity, AND virtual machine indicators
+    
+    Based on VMAware (https://github.com/kernelwernel/VMAware) by kernelwernel
+    Original FakerDetector by @praiselily [Lily] and @valor4.0 [DrValor]
+    Hybrid version integrates both for comprehensive environment detection
+
+#>
+
+$HoursBack = 24
+$OutputPath = "$env:USERPROFILE\Desktop\ConnectionSummary.html"
+
+$PossibleVariables = $false
+
+if (-not (Test-Path (Split-Path $OutputPath))) {
+    New-Item -ItemType Directory -Path (Split-Path $OutputPath) -Force | Out-Null
+}
+
+
+Write-Host @"
+                                                  
+ _    _       _          ___     _                
+|_|  | |_ ___| |_ ___   |  _|___| |_ ___ ___ ___  
+| |  |   | .'|  _| -_|  |  _| .'| '_| -_|  _|_ -| 
+|_|  |_|_|__,|_| |___|  |_| |__,|_,_|___|_| |___| 
+                                                  
+  _____ __  __  ____    __  __ _   _ _   
+ |  ___|  \/  |/ ___|  |  \/  | \ | (_)_ __ ___  
+ | |_  | |\/| | |  _   | |\/| |  \| | | '_ ` _ \ 
+ |  _| | |  | | |_| |  | |  | | |\  | | | | | | |
+ |_|   |_|  |_|\____|  |_|  |_|_| \_|_|_| |_| |_|
+                                                  
+"@ -ForegroundColor Cyan                                                                                        
+
+Write-Host "Comprehensive Environment Detection (VM + Hotspot)" -ForegroundColor Green
+Write-Host "Integrating VMAware techniques with FakerDetector" -ForegroundColor Cyan
+
+$startTime = (Get-Date).AddHours(-$HoursBack)
+$suspiciousActivities = @()
+$fakerDetected = $false
+$fakerIndicators = @()
+$vmDetected = $false
+$vmScore = 0
+$vmIndicators = @()
+$vmBrand = "Unknown"
+
+Write-Host ""
+Write-Host "Detection Systems Active:" -ForegroundColor Cyan
+Write-Host "  - VMAware VM Detection Techniques (Windows)" -ForegroundColor Green
+Write-Host "  - FakerDetector Hotspot Analysis" -ForegroundColor Green
+Write-Host "Made with love by lily<3" -ForegroundColor Cyan
+Write-Host ""
+
+# ============================================================================
+# SECTION 1: VMAWARE-BASED VM DETECTION TECHNIQUES
+# ============================================================================
+
+Write-Host "[VMAware] Running VM detection techniques..." -ForegroundColor Yellow
+
+# Technique 1: Virtual Processors Check
+try {
+    $processorCount = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
+    if ($processorCount -gt 16) {
+        $vmScore += 15
+        $vmIndicators += "High logical processor count: $processorCount (common in VMs)"
+    }
+} catch {}
+
+# Technique 2: BIOS/SMBIOS Check
+try {
+    $biosInfo = Get-WmiObject Win32_BIOS
+    $biosManufacturer = $biosInfo.Manufacturer
+    $biosSerialNumber = $biosInfo.SerialNumber
+    
+    $vmBiosPatterns = @(
+        'VMware', 'VirtualBox', 'QEMU', 'KVM', 'Xen', 
+        'Microsoft Hyper-V', 'Parallels', 'Bochs', 'InnoTek'
+    )
+    
+    foreach ($pattern in $vmBiosPatterns) {
+        if ($biosManufacturer -like "*$pattern*") {
+            $vmScore += 40
+            $vmIndicators += "BIOS manufacturer contains VM pattern: $pattern"
+            $vmBrand = $pattern
+            break
+        }
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($biosSerialNumber) -or $biosSerialNumber -eq "None" -or $biosSerialNumber -eq "0") {
+        $vmScore += 20
+        $vmIndicators += "Invalid or empty BIOS serial number detected"
+    }
+} catch {}
+
+# Technique 3: Computer System Manufacturer
+try {
+    $computerSystem = Get-WmiObject Win32_ComputerSystem
+    $manufacturer = $computerSystem.Manufacturer
+    $model = $computerSystem.Model
+    
+    $vmManufacturerPatterns = @(
+        @{Pattern='VMware'; Brand='VMware'},
+        @{Pattern='VirtualBox'; Brand='VirtualBox'},
+        @{Pattern='QEMU'; Brand='QEMU'},
+        @{Pattern='KVM'; Brand='KVM'},
+        @{Pattern='Xen'; Brand='Xen'},
+        @{Pattern='Bochs'; Brand='Bochs'},
+        @{Pattern='Parallels'; Brand='Parallels'}
+    )
+    
+    foreach ($vmPattern in $vmManufacturerPatterns) {
+        if ($manufacturer -like "*$($vmPattern.Pattern)*") {
+            $vmScore += 50
+            $vmIndicators += "System manufacturer indicates VM: $($vmPattern.Pattern)"
+            $vmBrand = $vmPattern.Brand
+            break
+        }
+    }
+} catch {}
+
+# Technique 4: Disk Serial Number Check
+try {
+    $disks = Get-WmiObject Win32_DiskDrive
+    foreach ($disk in $disks) {
+        $serialNumber = $disk.SerialNumber.Trim()
+        if ([string]::IsNullOrWhiteSpace($serialNumber)) {
+            $vmScore += 15
+            $vmIndicators += "Disk missing serial number"
+        }
+        
+        # Check for VM-specific disk patterns
+        if ($disk.Model -match "VBOX|VMware|QEMU|VIRTUAL") {
+            $vmScore += 30
+            $vmIndicators += "Disk model indicates VM: $($disk.Model)"
+            if ($vmBrand -eq "Unknown") {
+                if ($disk.Model -match "VBOX") { $vmBrand = "VirtualBox" }
+                elseif ($disk.Model -match "VMware") { $vmBrand = "VMware" }
+                elseif ($disk.Model -match "QEMU") { $vmBrand = "QEMU" }
+            }
+        }
+    }
+} catch {}
+
+# Technique 5: Network Adapter MAC Address OUI Check
+try {
+    $adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.MACAddress -ne $null }
+    
+    $vmMacPrefixes = @{
+        "000C29" = "VMware"
+        "005056" = "VMware"
+        "080027" = "VirtualBox"
+        "00155D" = "Hyper-V"
+        "001DD8" = "Hyper-V"
+        "001517" = "Xen"
+        "00163E" = "Xen"
+        "525400" = "QEMU/KVM"
+        "ACDE48" = "Private"
+    }
+    
+    foreach ($adapter in $adapters) {
+        $macPrefix = $adapter.MACAddress.Replace("-", "").Substring(0, 6).ToUpper()
+        if ($vmMacPrefixes.ContainsKey($macPrefix)) {
+            $vmScore += 35
+            $vmIndicators += "MAC address OUI indicates $($vmMacPrefixes[$macPrefix]) VM"
+            if ($vmBrand -eq "Unknown") {
+                $vmBrand = $vmMacPrefixes[$macPrefix]
+            }
+        }
+    }
+} catch {}
+
+# Technique 6: Video Controller Check
+try {
+    $videoControllers = Get-WmiObject Win32_VideoController
+    foreach ($controller in $videoControllers) {
+        $name = $controller.Name
+        if ($name -match "VMware|VirtualBox|QEMU|Standard VGA|Basic Render Driver") {
+            $vmScore += 25
+            $vmIndicators += "Video controller indicates VM: $name"
+            if ($vmBrand -eq "Unknown") {
+                if ($name -match "VMware") { $vmBrand = "VMware" }
+                elseif ($name -match "VirtualBox") { $vmBrand = "VirtualBox" }
+                elseif ($name -match "QEMU") { $vmBrand = "QEMU" }
+            }
+        }
+    }
+} catch {}
+
+# Technique 7: Running Processes Check (VM tools)
+try {
+    $vmProcesses = @(
+        "vmtoolsd", "vmwaretray", "vmwareuser", "vboxservice", 
+        "vboxtray", "qemu-ga", "spice-webdavd", "vdagent"
+    )
+    
+    $runningProcesses = Get-Process | Select-Object -ExpandProperty ProcessName
+    foreach ($vmProcess in $vmProcesses) {
+        if ($runningProcesses -contains $vmProcess) {
+            $vmScore += 30
+            $vmIndicators += "VM guest tools process running: $vmProcess"
+        }
+    }
+} catch {}
+
+# Technique 8: Registry Keys Check
+try {
+    $vmRegistryKeys = @(
+        "HKLM:\HARDWARE\DESCRIPTION\System\BIOS",
+        "HKLM:\SOFTWARE\Oracle\VirtualBox Guest Additions",
+        "HKLM:\SOFTWARE\VMware, Inc.\VMware Tools",
+        "HKLM:\SYSTEM\CurrentControlSet\Services\vmmouse",
+        "HKLM:\SYSTEM\CurrentControlSet\Services\vmhgfs",
+        "HKLM:\SYSTEM\CurrentControlSet\Services\VBoxService",
+        "HKLM:\SYSTEM\CurrentControlSet\Services\VBoxMouse"
+    )
+    
+    foreach ($key in $vmRegistryKeys) {
+        if (Test-Path $key) {
+            $vmScore += 25
+            $vmIndicators += "VM-related registry key found: $key"
+        }
+    }
+} catch {}
+
+# Technique 9: WMI Service Check
+try {
+    $services = Get-WmiObject Win32_Service | Where-Object { $_.State -eq "Running" }
+    $vmServices = @("vmtools", "VBoxService", "qemu-guest-agent", "spice-vdagent")
+    
+    foreach ($service in $services) {
+        foreach ($vmService in $vmServices) {
+            if ($service.Name -like "*$vmService*" -or $service.DisplayName -like "*$vmService*") {
+                $vmScore += 20
+                $vmIndicators += "VM service running: $($service.Name)"
+            }
+        }
+    }
+} catch {}
+
+# Technique 10: Physical Memory Check
+try {
+    $memory = Get-WmiObject Win32_PhysicalMemory
+    $totalSlots = $memory.Count
+    $totalCapacity = ($memory | Measure-Object -Property Capacity -Sum).Sum / 1GB
+    
+    if ($totalSlots -eq 0 -or $totalCapacity -eq 0) {
+        $vmScore += 20
+        $vmIndicators += "Physical memory information unavailable or invalid"
+    }
+    
+    # Common VM memory sizes (powers of 2)
+    if ($totalCapacity -in @(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)) {
+        $vmScore += 5
+        $vmIndicators += "Memory size is a common VM allocation: ${totalCapacity}GB"
+    }
+} catch {}
+
+# Determine if VM based on score
+if ($vmScore -ge 50) {
+    $vmDetected = $true
+}
+
+if ($vmDetected) {
+    Write-Host "  [!] VM DETECTED!" -ForegroundColor Red
+    Write-Host "  Brand: $vmBrand" -ForegroundColor Red
+    Write-Host "  Score: $vmScore/100" -ForegroundColor Red
+    Write-Host "  Indicators:" -ForegroundColor Red
+    foreach ($indicator in $vmIndicators) {
+        Write-Host "    - $indicator" -ForegroundColor Yellow
+    }
+    $suspiciousActivities += "Virtual Machine detected ($vmBrand) with score $vmScore/100"
+} else {
+    Write-Host "  [+] No VM detected (Score: $vmScore/100)" -ForegroundColor Green
+}
+
+Write-Host ""
+
+# ============================================================================
+# SECTION 2: FAKERDETECTOR HOTSPOT ANALYSIS
+# ============================================================================
+
+Write-Host "[FakerDetector] Analyzing network and hotspot activity..." -ForegroundColor Yellow
+
+$wlanEvents = @()
+try {
+    $events = Get-WinEvent -LogName "Microsoft-Windows-WLAN-AutoConfig/Operational" -MaxEvents 100 -ErrorAction Stop |
+              Where-Object { $_.TimeCreated -gt $startTime }
+    
+    foreach ($event in $events) {
+        $wlanEvents += [PSCustomObject]@{
+            TimeCreated = $event.TimeCreated
+            EventID = $event.Id
+            Message = $event.Message.Substring(0, [Math]::Min(200, $event.Message.Length))
+        }
+    }
+} catch {
+    # Silently continue
+}
+
+$networkProfiles = @()
+try {
+    $profileOutput = netsh wlan show profiles
+    $profileNames = $profileOutput | Select-String "All User Profile\s+:\s+(.+)" | ForEach-Object {
+        $_.Matches.Groups[1].Value.Trim()
+    }
+    
+    foreach ($profileName in $profileNames) {
+        if ([string]::IsNullOrWhiteSpace($profileName)) { continue }
+        
+        $isHotspot = $false
+        
+        if ($profileName -match "Android|iPhone|iPad|Galaxy|Pixel|OnePlus|Xiaomi|DIRECT-|SM-|GT-") {
+            $isHotspot = $true
+        }
+
+        if ($PossibleVariables) {
+            $isHotspot = $false
+        }
+        
+        $networkProfiles += [PSCustomObject]@{
+            SSID = $profileName
+            IsHotspot = $isHotspot
+        }
+    }
+    
+    $hotspotProfiles = $networkProfiles | Where-Object { $_.IsHotspot }
+    if ($hotspotProfiles.Count -gt 0) {
+        Write-Host "  Detected $($hotspotProfiles.Count) hotspot profile(s):" -ForegroundColor Yellow
+        foreach ($hp in $hotspotProfiles) {
+            Write-Host "    - $($hp.SSID)" -ForegroundColor Yellow
+        }
+    }
+} catch {
+    # Silently continue
+}
+
+$currentConnection = $null
+$hotspotIndicators = @()
+
+try {
+    $interfaceOutput = netsh wlan show interfaces
+    
+    $ssidMatch = $interfaceOutput | Select-String "^\s+SSID\s+:\s+(.+)$"
+    $stateMatch = $interfaceOutput | Select-String "^\s+State\s+:\s+(.+)$"
+    $bssidMatch = $interfaceOutput | Select-String "^\s+BSSID\s+:\s+(.+)$"
+    $networkTypeMatch = $interfaceOutput | Select-String "^\s+Network type\s+:\s+(.+)$"
+    $radioTypeMatch = $interfaceOutput | Select-String "^\s+Radio type\s+:\s+(.+)$"
+    $channelMatch = $interfaceOutput | Select-String "^\s+Channel\s+:\s+(.+)$"
+    $signalMatch = $interfaceOutput | Select-String "^\s+Signal\s+:\s+(.+)$"
+    
+    if ($ssidMatch -and $stateMatch) {
+        $currentSSID = $ssidMatch.Matches.Groups[1].Value.Trim()
+        $currentState = $stateMatch.Matches.Groups[1].Value.Trim()
+        $bssid = if ($bssidMatch) { $bssidMatch.Matches.Groups[1].Value.Trim() } else { "N/A" }
+        $networkType = if ($networkTypeMatch) { $networkTypeMatch.Matches.Groups[1].Value.Trim() } else { "N/A" }
+        $radioType = if ($radioTypeMatch) { $radioTypeMatch.Matches.Groups[1].Value.Trim() } else { "N/A" }
+        $channel = if ($channelMatch) { $channelMatch.Matches.Groups[1].Value.Trim() } else { "N/A" }
+        $signal = if ($signalMatch) { $signalMatch.Matches.Groups[1].Value.Trim() } else { "N/A" }
+        
+        if ($currentState -eq "connected") {
+            $isHotspot = $false
+
+            if (-not $PossibleVariables) {
+                $hotspotNamePatterns = @(
+                    'Android', 'iPhone', 'iPad', 'Galaxy', 'Pixel', 'OnePlus', 
+                    'Xiaomi', 'Huawei', 'Oppo', 'Vivo', 'Realme', 'Nokia',
+                    'DIRECT-', 'SM-[A-Z0-9]', 'GT-[A-Z0-9]', 'Redmi', 'Mi ',
+                    "'s iPhone", "'s Galaxy", "'s Pixel", "'s Android"
+                )
+                
+                foreach ($pattern in $hotspotNamePatterns) {
+                    if ($currentSSID -match $pattern) {
+                        $isHotspot = $true
+                        $hotspotIndicators += "SSID matches mobile device pattern: $pattern"
+                        break
+                    }
+                }
+
+                if ($bssid -ne "N/A") {
+                    $oui = $bssid.Substring(0, 8).Replace(":", "").ToUpper()
+                    
+                    $mobileOUIs = @{
+                        "00505" = "Samsung"
+                        "0025BC" = "Apple"
+                        "0026B" = "Apple"
+                        "A8667" = "Google Pixel"
+                        "F0D1A" = "Google"
+                        "5C8D4" = "Xiaomi"
+                        "F8A45" = "OnePlus"
+                        "DC44B" = "Huawei"
+                        "B0B98" = "Samsung Galaxy"
+                    }
+                    
+                    foreach ($prefix in $mobileOUIs.Keys) {
+                        if ($oui -like "$prefix*") {
+                            $isHotspot = $true
+                            $hotspotIndicators += "BSSID indicates $($mobileOUIs[$prefix]) device"
+                            break
+                        }
+                    }
+
+                    $secondChar = $bssid.Substring(1, 1)
+                    if ($secondChar -match "[26AEae]") {
+                        $hotspotIndicators += "BSSID uses locally administered address (common in hotspots)"
+                        $isHotspot = $true
+                    }
+                }
+                
+                try {
+                    $gateway = (Get-WmiObject -Class Win32_NetworkAdapterConfiguration | 
+                               Where-Object { $_.IPEnabled -and $_.DefaultIPGateway }).DefaultIPGateway | Select-Object -First 1
+                    
+                    if ($gateway) {
+                        if ($gateway -like "192.168.137.*") {
+                            $isHotspot = $true
+                            $fakerDetected = $true
+                            $fakerIndicators += "Windows PC Hotspot gateway detected (192.168.137.x)"
+                            $hotspotIndicators += "Gateway indicates Windows PC Mobile Hotspot (192.168.137.x range) - FAKER INDICATOR"
+                        }
+                        
+                        $hotspotGateways = @("192.168.43.1", "192.168.137.1", "192.168.42.1", "192.168.49.1")
+                        
+                        if ($gateway -in $hotspotGateways) {
+                            $isHotspot = $true
+                            $hotspotIndicators += "Gateway IP ($gateway) is typical for mobile hotspots"
+                            
+                            if ($gateway -eq "192.168.137.1") {
+                                $fakerDetected = $true
+                                $fakerIndicators += "Windows PC Hotspot gateway: $gateway"
+                            }
+                        }
+
+                        if ($gateway -like "192.168.43.*") {
+                            $isHotspot = $true
+                            $hotspotIndicators += "Gateway indicates Android hotspot (192.168.43.x range)"
+                        }
+                    }
+                } catch {
+                    # Silently continue if gateway detection fails
+                }
+
+                try {
+                    $dnsServers = (Get-WmiObject -Class Win32_NetworkAdapterConfiguration | 
+                                  Where-Object { $_.IPEnabled -and $_.DNSServerSearchOrder }).DNSServerSearchOrder
+                    
+                    if ($dnsServers -and $dnsServers[0]) {
+                        if ($gateway -and $dnsServers[0] -eq $gateway) {
+                            $hotspotIndicators += "DNS server is same as gateway (typical hotspot configuration)"
+                            $isHotspot = $true
+                        }
+                    }
+                } catch {
+                    # Silently continue if DNS detection fails
+                }
+                
+
+                if ($networkType -eq "Infrastructure" -and $channel -match "^\d+$") {
+                    $channelNum = [int]$channel
+                    if ($channelNum -in @(1, 6, 11)) {
+                        $hotspotIndicators += "Using common mobile hotspot channel: $channelNum"
+                    }
+                }
+            }
+            
+            $currentConnection = [PSCustomObject]@{
+                SSID = $currentSSID
+                State = $currentState
+                BSSID = $bssid
+                NetworkType = $networkType
+                RadioType = $radioType
+                Channel = $channel
+                Signal = $signal
+                IsHotspot = $isHotspot
+                HotspotIndicators = $hotspotIndicators
+            }
+            
+            Write-Host "  Currently connected to: $currentSSID" -ForegroundColor Green
+            Write-Host "    BSSID: $bssid" -ForegroundColor Gray
+            Write-Host "    Channel: $channel | Signal: $signal" -ForegroundColor Gray
+            
+            if ($isHotspot -and -not $PossibleVariables) {
+                Write-Host "`n  ⚠️  WARNING: Connected to HOTSPOT!" -ForegroundColor Red
+                Write-Host "  Hotspot Indicators Detected:" -ForegroundColor Red
+                foreach ($indicator in $hotspotIndicators) {
+                    Write-Host "    - $indicator" -ForegroundColor Yellow
+                }
+                $suspiciousActivities += "Currently connected to hotspot: $currentSSID ($($hotspotIndicators.Count) indicators)"
+            }
+        }
+    }
+} catch {
+    # Silently continue
+}
+
+$hostedNetworkActive = $false
+$hostedNetworkSSID = "N/A"
+$hostedNetworkClients = 0
+
+try {
+    $hostedOutput = netsh wlan show hostednetwork
+    
+    $statusMatch = $hostedOutput | Select-String "Status\s+:\s+(.+)"
+    if ($statusMatch) {
+        $status = $statusMatch.Matches.Groups[1].Value.Trim()
+        $hostedNetworkActive = ($status -eq "Started")
+    }
+
+    if ($PossibleVariables) {
+        $hostedNetworkActive = $false
+    }
+    
+    if ($hostedNetworkActive) {
+        $ssidMatch = $hostedOutput | Select-String 'SSID name\s+:\s+"(.+)"'
+        if ($ssidMatch) {
+            $hostedNetworkSSID = $ssidMatch.Matches.Groups[1].Value
+        }
+        
+        $clientMatch = $hostedOutput | Select-String "Number of clients\s+:\s+(\d+)"
+        if ($clientMatch) {
+            $hostedNetworkClients = [int]$clientMatch.Matches.Groups[1].Value
+        }
+        
+        Write-Host "  WARNING: Hosted Network is ACTIVE!" -ForegroundColor Red
+        Write-Host "    SSID: $hostedNetworkSSID" -ForegroundColor Red
+        Write-Host "    Clients: $hostedNetworkClients" -ForegroundColor Red
+        $suspiciousActivities += "Active hosted network '$hostedNetworkSSID' with $hostedNetworkClients client(s)"
+    }
+} catch {
+    # Silently continue
+}
+
+$mobileHotspotActive = $false
+try {
+    $hotspotService = Get-Service -Name "icssvc" -ErrorAction SilentlyContinue
+    
+    if ($hotspotService -and -not $PossibleVariables) {
+        if ($hotspotService.Status -eq "Running") {
+            $mobileHotspotActive = $true
+            Write-Host "  WARNING: Mobile Hotspot service is RUNNING!" -ForegroundColor Red
+            $suspiciousActivities += "Windows Mobile Hotspot service (icssvc) is running"
+        }
+    }
+} catch {
+    # Silently continue
+}
+
+$virtualAdapters = @()
+try {
+    $adapters = Get-WmiObject -Class Win32_NetworkAdapter -ErrorAction Stop
+    
+    foreach ($adapter in $adapters) {
+        if ($adapter.NetEnabled -eq $true -and 
+            $adapter.Description -match "Virtual|Hosted|Wi-Fi Direct|TAP" -and
+            -not $PossibleVariables) {
+            
+            $virtualAdapters += [PSCustomObject]@{
+                Name = $adapter.Name
+                Description = $adapter.Description
+                MAC = $adapter.MACAddress
+            }
+            
+            Write-Host "  Found virtual adapter: $($adapter.Description)" -ForegroundColor Yellow
+        }
+    }
+    
+    if ($virtualAdapters.Count -gt 0) {
+        $suspiciousActivities += "$($virtualAdapters.Count) virtual network adapter(s) detected"
+    }
+} catch {
+    # Silently continue
+}
+
+$connectedDevices = @()
+try {
+    $arpOutput = arp -a
+    
+    foreach ($line in $arpOutput) {
+        if ($line -match "(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f-]+)\s+(dynamic|static)") {
+            $ip = $matches[1]
+            $mac = $matches[2]
+            $type = $matches[3]
+            
+            if ($ip -match "^192\.168\." -and $type -eq "dynamic") {
+                $connectedDevices += [PSCustomObject]@{
+                    IP = $ip
+                    MAC = $mac
+                    Type = $type
+                }
+            }
+        }
+    }
+    
+    if ($connectedDevices.Count -ge 2 -and -not $PossibleVariables) {
+        Write-Host "  Note: Multiple devices detected - review ARP table in report" -ForegroundColor Cyan
+    }
+} catch {
+    # Silently continue
+}
+
+Write-Host ""
+Write-Host "[Report] Generating comprehensive HTML Report..." -ForegroundColor Yellow
+
+$htmlReport = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Detection Report - VM & Hotspot Analysis</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --success-color: #27ae60;
+            --warning-color: #e74c3c;
+            --info-color: #f39c12;
+            --light-bg: #f8f9fa;
+            --dark-text: #2c3e50;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            --transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            margin: 20px;
+            padding: 20px;
+            min-height: 100vh;
+            color: var(--dark-text);
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #1a2530 100%);
+            color: white;
+            padding: 30px;
+            border-radius: var(--border-radius);
+            margin-bottom: 30px;
+            text-align: center;
+            box-shadow: var(--box-shadow);
+            animation: fadeInDown 0.8s ease;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .credits {
+            margin-top: 15px;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            text-align: center;
+            transition: var(--transition);
+            animation: fadeInUp 0.8s ease;
+            cursor: pointer;
+        }
+        
+        .card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 12px 25px rgba(0, 0, 0, 0.25);
+            transition: var(--transition);
+        }
+        
+        .card.warning { background: linear-gradient(135deg, var(--warning-color) 0%, #c0392b 100%); color: white; }
+        .card.success { background: linear-gradient(135deg, var(--success-color) 0%, #219653 100%); color: white; }
+        .card.info { background: linear-gradient(135deg, var(--secondary-color) 0%, #1976d2 100%); color: white; }
+        .card.danger { background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%); color: white; }
+        
+        .card i {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        
+        .card h3 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }
+        
+        .card p {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        
+        .section {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: var(--box-shadow);
+            animation: fadeIn 0.8s ease;
+            transition: var(--transition);
+        }
+        
+        .section:hover {
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            transform: translateY(-3px);
+        }
+        
+        .section h2 {
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--secondary-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .alert {
+            padding: 20px;
+            border-radius: var(--border-radius);
+            margin-bottom: 20px;
+            animation: slideInLeft 0.7s ease;
+            transition: var(--transition);
+        }
+        
+        .alert:hover {
+            transform: translateX(5px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+        }
+        
+        .alert.warning { background: linear-gradient(135deg, #ffdede 0%, #ffebee 100%); border-left: 5px solid var(--warning-color); }
+        .alert.success { background: linear-gradient(135deg, #e8f5e9 0%, #eafaf1 100%); border-left: 5px solid var(--success-color); }
+        .alert.danger { background: linear-gradient(135deg, #fadbd8 0%, #f5b7b1 100%); border-left: 5px solid #8e44ad; }
+        
+        .alert ul {
+            margin-top: 10px;
+            padding-left: 20px;
+        }
+        
+        .alert li {
+            margin-bottom: 8px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: var(--box-shadow);
+        }
+        
+        th {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #1a2530 100%);
+            color: white;
+            padding: 15px;
+            text-align: left;
+            position: sticky;
+            top: 0;
+        }
+        
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            transition: var(--transition);
+        }
+        
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        
+        tr {
+            transition: var(--transition);
+        }
+        
+        tr:hover {
+            background-color: #e3f2fd;
+            transform: scale(1.01);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+        
+        .hotspot-row {
+            background: linear-gradient(135deg, #fff3cd 0%, #fff8e1 100%) !important;
+            font-weight: bold;
+        }
+        
+        .vm-row {
+            background: linear-gradient(135deg, #fadbd8 0%, #f5b7b1 100%) !important;
+            font-weight: bold;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: var(--primary-color);
+            font-style: italic;
+        }
+        
+        @keyframes fadeIn {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        
+        @keyframes fadeInUp {
+            0% {
+                opacity: 0;
+                transform: translateY(40px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes fadeInDown {
+            0% {
+                opacity: 0;
+                transform: translateY(-40px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes slideInLeft {
+            0% {
+                opacity: 0;
+                transform: translateX(-40px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .summary-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .section {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1><i class="fas fa-shield-alt"></i> Hybrid Detection Report</h1>
+            <p>VM Analysis (VMAware) + Hotspot Detection (FakerDetector)</p>
+            <p>Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</p>
+            <div class="credits">
+                VMAware by kernelwernel | FakerDetector by @praiselily [Lily]<br>
+                Hybrid integration, VM detection techniques, and all modifications by @valor4.0 [DrValor]
+            </div>
+        </header>
+"@
+
+# Summary Cards
+$htmlReport += "<div class='summary-cards'>
+    <div class='card $(if ($vmDetected) { 'danger' } else { 'success' })'>
+        <i class='fas fa-desktop'></i>
+        <h3>VM Detection</h3>
+        <p>$(if ($vmDetected) { 'DETECTED' } else { 'NOT DETECTED' })</p>
+    </div>
+    <div class='card info'>
+        <i class='fas fa-tag'></i>
+        <h3>VM Brand</h3>
+        <p>$vmBrand</p>
+    </div>
+    <div class='card info'>
+        <i class='fas fa-chart-bar'></i>
+        <h3>VM Score</h3>
+        <p>$vmScore/100</p>
+    </div>
+    <div class='card warning'>
+        <i class='fas fa-exclamation-triangle'></i>
+        <h3>Suspicious Activities</h3>
+        <p>$($suspiciousActivities.Count)</p>
+    </div>
+    <div class='card info'>
+        <i class='fas fa-wifi'></i>
+        <h3>Hotspot Profiles</h3>
+        <p>$((($networkProfiles | Where-Object { $_.IsHotspot }).Count))</p>
+    </div>
+    <div class='card $(if ($hostedNetworkActive) { 'warning' } else { 'success' })'>
+        <i class='fas fa-broadcast-tower'></i>
+        <h3>Hosted Network</h3>
+        <p>$(if ($hostedNetworkActive) { 'ACTIVE' } else { 'Inactive' })</p>
+    </div>
+    <div class='card $(if ($mobileHotspotActive) { 'warning' } else { 'success' })'>
+        <i class='fas fa-mobile-alt'></i>
+        <h3>Mobile Hotspot</h3>
+        <p>$(if ($mobileHotspotActive) { 'RUNNING' } else { 'Stopped' })</p>
+    </div>
+    <div class='card $(if ($virtualAdapters.Count -gt 0) { 'warning' } else { 'success' })'>
+        <i class='fas fa-network-wired'></i>
+        <h3>Virtual Adapters</h3>
+        <p>$($virtualAdapters.Count)</p>
+    </div>
+</div>"
+
+# VM Detection Section
+$htmlReport += "<div class='section'>
+    <h2><i class='fas fa-desktop'></i> Virtual Machine Detection (VMAware Techniques)</h2>"
+
+if ($vmDetected) {
+    $htmlReport += "<div class='alert danger'><strong>⚠️ VIRTUAL MACHINE DETECTED!</strong><br>"
+    $htmlReport += "<strong>Brand:</strong> $vmBrand<br>"
+    $htmlReport += "<strong>Score:</strong> $vmScore/100<br><br>"
+    $htmlReport += "<strong>VM Indicators:</strong><ul>"
+    foreach ($indicator in $vmIndicators) {
+        $htmlReport += "<li><i class='fas fa-exclamation-triangle'></i> $indicator</li>"
+    }
+    $htmlReport += "</ul></div>"
+} else {
+    $htmlReport += "<div class='alert success'><i class='fas fa-check-circle'></i> No virtual machine detected (Score: $vmScore/100)</div>"
+}
+$htmlReport += "</div>"
+
+# Suspicious Activities Section
+$htmlReport += "<div class='section'>
+    <h2><i class='fas fa-shield-alt'></i> Security Analysis (FakerDetector)</h2>"
+
+if ($suspiciousActivities.Count -gt 0) {
+    $htmlReport += "<div class='alert warning'><strong>⚠️ ALERT: $($suspiciousActivities.Count) suspicious activity(ies) detected!</strong><ul>"
+    foreach ($activity in $suspiciousActivities) {
+        $htmlReport += "<li><i class='fas fa-bullseye'></i> $activity</li>"
+    }
+    $htmlReport += "</ul></div>"
+} else {
+    $htmlReport += "<div class='alert success'><i class='fas fa-check-circle'></i> No suspicious activities detected</div>"
+}
+$htmlReport += "</div>"
+
+# Current connection
+if ($currentConnection) {
+    $htmlReport += "<div class='section'>
+        <h2><i class='fas fa-signal'></i> Current Connection</h2>"
+    if ($currentConnection.IsHotspot -and -not $PossibleVariables) {
+        $htmlReport += "<div class='alert warning'><strong>⚠️ CONNECTED TO HOTSPOT: $($currentConnection.SSID)</strong><br>"
+        $htmlReport += "BSSID: $($currentConnection.BSSID)<br>"
+        $htmlReport += "Channel: $($currentConnection.Channel) | Signal: $($currentConnection.Signal)<br><br>"
+        $htmlReport += "<strong>Hotspot Indicators:</strong><ul>"
+        foreach ($indicator in $currentConnection.HotspotIndicators) {
+            $htmlReport += "<li><i class='fas fa-info-circle'></i> $indicator</li>"
+        }
+        $htmlReport += "</ul></div>"
+    } else {
+        $htmlReport += "<div class='alert success'>Connected to: <strong>$($currentConnection.SSID)</strong><br>"
+        $htmlReport += "BSSID: $($currentConnection.BSSID) | Channel: $($currentConnection.Channel) | Signal: $($currentConnection.Signal)</div>"
+    }
+    $htmlReport += "</div>"
+}
+
+# Hosted network
+$htmlReport += "<div class='section'>
+    <h2><i class='fas fa-tower-broadcast'></i> Hosted Network Status</h2>"
+if ($hostedNetworkActive) {
+    $htmlReport += "<div class='alert warning'><i class='fas fa-exclamation-circle'></i> ACTIVE - SSID: $hostedNetworkSSID, Clients: $hostedNetworkClients</div>"
+} else {
+    $htmlReport += "<div class='alert success'><i class='fas fa-check-circle'></i> Inactive</div>"
+}
+$htmlReport += "</div>"
+
+# Mobile hotspot
+$htmlReport += "<div class='section'>
+    <h2><i class='fas fa-mobile-screen-button'></i> Mobile Hotspot Service</h2>"
+if ($mobileHotspotActive) {
+    $htmlReport += "<div class='alert warning'><i class='fas fa-exclamation-circle'></i> RUNNING</div>"
+} else {
+    $htmlReport += "<div class='alert success'><i class='fas fa-check-circle'></i> Stopped</div>"
+}
+$htmlReport += "</div>"
+
+# Network profiles
+$htmlReport += "<div class='section'>
+    <h2><i class='fas fa-list'></i> Network Profiles</h2>
+    <table>
+        <tr>
+            <th><i class='fas fa-wifi'></i> SSID</th>
+            <th><i class='fas fa-tag'></i> Type</th>
+        </tr>"
+foreach ($profile in $networkProfiles) {
+    $rowClass = if ($profile.IsHotspot) { " class='hotspot-row'" } else { "" }
+    $type = if ($profile.IsHotspot) { "HOTSPOT" } else { "WiFi" }
+    $htmlReport += "<tr$rowClass><td>$($profile.SSID)</td><td>$type</td></tr>"
+}
+$htmlReport += "</table></div>"
+
+# Virtual adapters
+if ($virtualAdapters.Count -gt 0) {
+    $htmlReport += "<div class='section'>
+        <h2><i class='fas fa-network-wired'></i> Virtual Adapters</h2>
+        <table>
+            <tr>
+                <th><i class='fas fa-info-circle'></i> Description</th>
+                <th><i class='fas fa-microchip'></i> MAC Address</th>
+            </tr>"
+    foreach ($adapter in $virtualAdapters) {
+        $htmlReport += "<tr><td>$($adapter.Description)</td><td>$($adapter.MAC)</td></tr>"
+    }
+    $htmlReport += "</table></div>"
+}
+
+$htmlReport += "<div class='section'>
+    <h2><i class='fas fa-laptop'></i> Connected Devices</h2>
+    <table>
+        <tr>
+            <th><i class='fas fa-network-wired'></i> IP Address</th>
+            <th><i class='fas fa-microchip'></i> MAC Address</th>
+        </tr>"
+foreach ($device in $connectedDevices) {
+    $htmlReport += "<tr><td>$($device.IP)</td><td>$($device.MAC)</td></tr>"
+}
+$htmlReport += "</table></div>"
+
+$htmlReport += @"
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+
+        // Add fade-in effect to all sections when they come into view
+        const observerOptions = {
+            threshold: 0.15,
+            rootMargin: '0px 0px -100px 0px'
+        };
+        
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    setTimeout(() => {
+                        entry.target.style.opacity = 1;
+                        entry.target.style.transform = 'translateY(0)';
+                    }, 200);
+                }
+            });
+        }, observerOptions);
+        
+        document.querySelectorAll('.section, .card').forEach(el => {
+            el.style.opacity = 0;
+            el.style.transform = 'translateY(30px)';
+            el.style.transition = 'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+            observer.observe(el);
+        });
+        
+        // Toggle table rows on click
+        document.querySelectorAll('table tr:not(:first-child)').forEach(row => {
+            row.addEventListener('click', function() {
+                this.classList.toggle('expanded');
+            });
+        });
+        
+        // Animate counters
+        function animateCounter(element, start, end, duration) {
+            let startTimestamp = null;
+            const easing = t => t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                const easedProgress = easing(progress);
+                const value = Math.floor(easedProgress * (end - start) + start);
+                element.textContent = value;
+                if (progress < 1) {
+                    window.requestAnimationFrame(step);
+                }
+            };
+            window.requestAnimationFrame(step);
+        }
+        
+        // Animate counters when they come into view
+        const counterObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && !entry.target.dataset.animated) {
+                    const element = entry.target;
+                    const start = 0;
+                    const end = parseInt(element.textContent.replace(/[^0-9]/g, ''));
+                    animateCounter(element, start, end, 2500);
+                    element.dataset.animated = true;
+                }
+            });
+        });
+        
+        document.querySelectorAll('.card p').forEach(card => {
+            counterObserver.observe(card);
+        });
+    </script>
+<div class='footer'>
+    <p>Hybrid Detection Report - FakerDetector + VMAware Integration</p>
+    <p>VMAware: https://github.com/kernelwernel/VMAware (MIT License)</p>
+    <p>FakerDetector: Created by @praiselily [Lily]</p>
+    <p>Hybrid Integration & VM Detection Techniques by @valor4.0 [DrValor]</p>
+    <p>Contact: DM @praiselily on Discord if anything breaks</p>
+</div>
+</div>
+</body>
+</html>
+"@
+
+try {
+    $htmlReport | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
+    Write-Host "  Report saved successfully" -ForegroundColor Green
+} catch {
+    Write-Host "  Error saving report: $_" -ForegroundColor Red
+}
+
+Write-Host ""
+Write-Host "FINAL SUMMARY:" -ForegroundColor Cyan
+Write-Host "  VM Detection: $(if ($vmDetected) { 'DETECTED' } else { 'NOT DETECTED' })" -ForegroundColor $(if ($vmDetected) { "Red" } else { "Green" })
+Write-Host "  VM Brand: $vmBrand" -ForegroundColor Cyan
+Write-Host "  VM Score: $vmScore/100" -ForegroundColor $(if ($vmScore -ge 50) { "Red" } else { "Green" })
+Write-Host "  Suspicious Activities: $($suspiciousActivities.Count)" -ForegroundColor $(if ($suspiciousActivities.Count -gt 0) { "Red" } else { "Green" })
+Write-Host "  Hotspot Profiles: $(($networkProfiles | Where-Object { $_.IsHotspot }).Count)" -ForegroundColor $(if (($networkProfiles | Where-Object { $_.IsHotspot }).Count -gt 0) { "Yellow" } else { "Green" })
+Write-Host "  Hosted Network: $(if ($hostedNetworkActive) { 'ACTIVE' } else { 'Inactive' })" -ForegroundColor $(if ($hostedNetworkActive) { "Red" } else { "Green" })
+Write-Host "  Mobile Hotspot: $(if ($mobileHotspotActive) { 'RUNNING' } else { 'Stopped' })" -ForegroundColor $(if ($mobileHotspotActive) { "Red" } else { "Green" })
+Write-Host "  Virtual Adapters: $($virtualAdapters.Count)" -ForegroundColor $(if ($virtualAdapters.Count -gt 0) { "Yellow" } else { "Green" })
+Write-Host "  Connected Devices: $($connectedDevices.Count)" -ForegroundColor Cyan
+
+if ($vmDetected) {
+    Write-Host "`nVM INDICATORS:" -ForegroundColor Red
+    foreach ($indicator in $vmIndicators) {
+        Write-Host "  - $indicator" -ForegroundColor Yellow
+    }
+}
+
+if ($suspiciousActivities.Count -gt 0) {
+    Write-Host "`nWARNINGS:" -ForegroundColor Red
+    foreach ($activity in $suspiciousActivities) {
+        Write-Host "  - $activity" -ForegroundColor Yellow
+    }
+}
+
+Write-Host "`nReport Location: $OutputPath" -ForegroundColor Cyan
+Write-Host "`nOpening report in browser..." -ForegroundColor Yellow
+
+try {
+    Start-Process $OutputPath
+} catch {
+    Write-Host "Could not open browser automatically. Please open the report manually." -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "Hybrid Detection Complete!" -ForegroundColor Green
+Write-Host "Based on VMAware by kernelwernel and FakerDetector by @praiselily & @valor4.0" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Script complete. Press any key to exit..." -ForegroundColor Green
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
