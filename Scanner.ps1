@@ -90,7 +90,7 @@ while ($true) {
                "6" {
             Clear-Host
             Write-Host ""
-            Write-Host "[+] Launching Services Managerr..." -ForegroundColor Green
+            Write-Host "[+] Launching Services Manager..." -ForegroundColor Green
             Write-Host ""
 
             powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Faker%20Detector' -UseBasicParsing)"
@@ -105,8 +105,7 @@ while ($true) {
             Write-Host "[+] Launching Faker Detector..." -ForegroundColor Green
             Write-Host ""
 
-            powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/praiselily/lilith-ps/refs/heads/main/Service-Enabler.ps1' -UseBasicParsing)"
-
+            irm "https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Faker%20Detector" | iex
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
         }
