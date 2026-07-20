@@ -12,6 +12,7 @@ function Show-Menu {
     Write-Host "  [4] Alt Detector" -ForegroundColor White
     Write-Host "  [5] Mod Analyzer" -ForegroundColor White
     Write-Host "  [6] Services Manager" -ForegroundColor White
+    Write-Host "  [7] Faker Detector" -ForegroundColor White
     Write-Host ""
     Write-Host "  [0] Exit" -ForegroundColor DarkGray
     Write-Host ""
@@ -90,6 +91,18 @@ while ($true) {
             Clear-Host
             Write-Host ""
             Write-Host "[+] Launching Services Managerr..." -ForegroundColor Green
+            Write-Host ""
+
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Faker%20Detector' -UseBasicParsing)"
+
+            Write-Host ""
+            Read-Host "Press ENTER to return to the menu"
+        }
+        
+            "7" {
+            Clear-Host
+            Write-Host ""
+            Write-Host "[+] Launching Faker Detector..." -ForegroundColor Green
             Write-Host ""
 
             powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/praiselily/lilith-ps/refs/heads/main/Service-Enabler.ps1' -UseBasicParsing)"
