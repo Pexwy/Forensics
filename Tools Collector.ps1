@@ -40,7 +40,6 @@ $urls = @(
     'https://www.nirsoft.net/utils/usbdeview-x64.zip',
     'https://www.nirsoft.net/utils/networkusageview-x64.zip',
     'https://d1kpmuwb7gvu1i.cloudfront.net/AccessData_FTK_Imager_4.7.1.exe',
-    'https://github.com/Yamato-Security/hayabusa/releases/download/v3.6.0/hayabusa-3.6.0-win-x64.zip',
     'https://download.ericzimmermanstools.com/net9/TimelineExplorer.zip',
     'https://www.nirsoft.net/utils/usbdrivelog.zip',
     'https://www.voidtools.com/Everything-1.4.1.1029.x64-Setup.exe',
