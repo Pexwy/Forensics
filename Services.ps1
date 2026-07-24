@@ -341,25 +341,25 @@ try {
 
 
     $consoleHistoryPath = "$env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt"
-    Write-Host "`n  Console Host History:" -ForegroundColor Cyan
+    Write-Host "`nConsole Host History:" -ForegroundColor Cyan
     
     if (Test-Path $consoleHistoryPath) {
         $historyFile = Get-Item -Path $consoleHistoryPath -Force
-        Write-Host "    Last Modified: " -NoNewline -ForegroundColor White
+        Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
         Write-Host $historyFile.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Yellow
         
 
         $attributes = $historyFile.Attributes
         if ($attributes -ne "Archive") {
-            Write-Host "    Attributes: " -NoNewline -ForegroundColor White
+            Write-Host "  Attributes: " -NoNewline -ForegroundColor White
             Write-Host $attributes -ForegroundColor Yellow
         } else {
-            Write-Host "    Attributes: Normal" -ForegroundColor Green
+            Write-Host "  Attributes: Normal" -ForegroundColor Green
         }
         
 
         $fileSize = $historyFile.Length
-        Write-Host "    File Size: " -NoNewline -ForegroundColor White
+        Write-Host "  File Size: " -NoNewline -ForegroundColor White
         Write-Host "$([math]::Round($fileSize/1024, 2)) KB" -ForegroundColor Yellow
         
     } else {
