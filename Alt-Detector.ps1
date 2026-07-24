@@ -11,6 +11,7 @@ $logFiles = Get-ChildItem -Path $startPath -Recurse -Filter "*.log" -File -Force
 $allFiles = @($gzFiles) + @($logFiles)
 
 $results = @()
+$seenUsers = @{}
 
 foreach ($file in $allFiles) {
     try {
@@ -39,9 +40,13 @@ foreach ($file in $allFiles) {
         
         $pattern = "Setting user:\s*(\S+)"
         if ($content -and $content -match $pattern) {
-            $results += [PSCustomObject]@{
-                "Usernames" = $Matches[1]
-                "Path" = $file.FullName
+            $username = $Matches[1]
+            if (-not $seenUsers.ContainsKey($username)) {
+                $seenUsers[$username] = $true
+                $results += [PSCustomObject]@{
+                    "Usernames" = $username
+                    "Path" = $file.FullName
+                }
             }
         }
     }
