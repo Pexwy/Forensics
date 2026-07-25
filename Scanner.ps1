@@ -93,7 +93,7 @@ while ($true) {
             Write-Host "[+] Launching Services Manager..." -ForegroundColor Green
             Write-Host ""
 
-            powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Faker%20Detector' -UseBasicParsing)"
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Services%20Manager' -UseBasicParsing)"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
