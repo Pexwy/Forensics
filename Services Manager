@@ -1,0 +1,110 @@
+# services-gui.ps1
+# Requires admin rights to change service startup types
+
+# --- Relaunch as Administrator if not already ---
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    exit
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$serviceNames = @(
+    "SysMain", "PcaSvc", "DPS", "EventLog", "Schedule",
+    "Bam", "Dusmsvc", "Appinfo", "CDPSvc", "DcomLaunch",
+    "PlugPlay", "WSearch", "DiagTrack"
+)
+
+# --- Main Form ---
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Service Manager"
+$form.Size = New-Object System.Drawing.Size(520, 420)
+$form.StartPosition = "CenterScreen"
+
+$listView = New-Object System.Windows.Forms.ListView
+$listView.View = "Details"
+$listView.FullRowSelect = $true
+$listView.GridLines = $true
+$listView.Size = New-Object System.Drawing.Size(480, 300)
+$listView.Location = New-Object System.Drawing.Point(10, 10)
+$listView.Columns.Add("Service Name", 150) | Out-Null
+$listView.Columns.Add("Status", 100) | Out-Null
+$listView.Columns.Add("Startup Type", 120) | Out-Null
+$form.Controls.Add($listView)
+
+function Refresh-List {
+    $listView.Items.Clear()
+    foreach ($name in $serviceNames) {
+        $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+        if ($svc) {
+            $item = New-Object System.Windows.Forms.ListViewItem($svc.Name)
+            $item.SubItems.Add($svc.Status.ToString()) | Out-Null
+            $item.SubItems.Add($svc.StartType.ToString()) | Out-Null
+            if ($svc.StartType -eq "Disabled") {
+                $item.BackColor = [System.Drawing.Color]::MistyRose
+            } else {
+                $item.BackColor = [System.Drawing.Color]::Honeydew
+            }
+            $listView.Items.Add($item) | Out-Null
+        } else {
+            $item = New-Object System.Windows.Forms.ListViewItem($name)
+            $item.SubItems.Add("Not Found") | Out-Null
+            $item.SubItems.Add("-") | Out-Null
+            $item.BackColor = [System.Drawing.Color]::LightGray
+            $listView.Items.Add($item) | Out-Null
+        }
+    }
+}
+
+Refresh-List
+
+# --- Enable Selected Button ---
+$enableButton = New-Object System.Windows.Forms.Button
+$enableButton.Text = "Enable Selected"
+$enableButton.Size = New-Object System.Drawing.Size(150, 35)
+$enableButton.Location = New-Object System.Drawing.Point(10, 320)
+$enableButton.Add_Click({
+    foreach ($selected in $listView.SelectedItems) {
+        $name = $selected.Text
+        try {
+            Set-Service -Name $name -StartupType Automatic -ErrorAction Stop
+            Start-Service -Name $name -ErrorAction SilentlyContinue
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("Failed to enable $name`: $_", "Error")
+        }
+    }
+    Refresh-List
+})
+$form.Controls.Add($enableButton)
+
+# --- Enable All Disabled Button ---
+$enableAllButton = New-Object System.Windows.Forms.Button
+$enableAllButton.Text = "Enable All Disabled"
+$enableAllButton.Size = New-Object System.Drawing.Size(150, 35)
+$enableAllButton.Location = New-Object System.Drawing.Point(170, 320)
+$enableAllButton.Add_Click({
+    foreach ($name in $serviceNames) {
+        $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+        if ($svc -and $svc.StartType -eq "Disabled") {
+            try {
+                Set-Service -Name $name -StartupType Automatic -ErrorAction Stop
+                Start-Service -Name $name -ErrorAction SilentlyContinue
+            } catch {
+                [System.Windows.Forms.MessageBox]::Show("Failed to enable $name`: $_", "Error")
+            }
+        }
+    }
+    Refresh-List
+})
+$form.Controls.Add($enableAllButton)
+
+# --- Refresh Button ---
+$refreshButton = New-Object System.Windows.Forms.Button
+$refreshButton.Text = "Refresh"
+$refreshButton.Size = New-Object System.Drawing.Size(150, 35)
+$refreshButton.Location = New-Object System.Drawing.Point(330, 320)
+$refreshButton.Add_Click({ Refresh-List })
+$form.Controls.Add($refreshButton)
+
+[System.Windows.Forms.Application]::Run($form)
