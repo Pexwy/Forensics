@@ -379,14 +379,29 @@ if ($results.Count -gt 0) {
     $dgv.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::Fill
     $dgv.ColumnHeadersHeightSizeMode = [System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode]::DisableResizing
 
+    # define columns explicitly BEFORE binding the DataSource — letting the
+    # grid auto-generate them means Columns[...] isn't reliably populated
+    # yet right after the assignment, which is what threw the errors
+    $dgv.AutoGenerateColumns = $false
+
+    $colUsername = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colUsername.Name = "Username"
+    $colUsername.DataPropertyName = "Username"
+    $colUsername.HeaderText = "Username"
+    $colUsername.FillWeight = 35
+    $colUsername.DefaultCellStyle.ForeColor = $colorPinkLt
+    $colUsername.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+    [void]$dgv.Columns.Add($colUsername)
+
+    $colPath = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colPath.Name = "Path"
+    $colPath.DataPropertyName = "Path"
+    $colPath.HeaderText = "Log Path"
+    $colPath.FillWeight = 65
+    $colPath.DefaultCellStyle.ForeColor = $colorBlue
+    [void]$dgv.Columns.Add($colPath)
+
     $dgv.DataSource = $dataTable.DefaultView
-    $dgv.Columns["Username"].HeaderText = "Username"
-    $dgv.Columns["Username"].FillWeight = 35
-    $dgv.Columns["Username"].DefaultCellStyle.ForeColor = $colorPinkLt
-    $dgv.Columns["Username"].DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
-    $dgv.Columns["Path"].HeaderText = "Log Path"
-    $dgv.Columns["Path"].FillWeight = 65
-    $dgv.Columns["Path"].DefaultCellStyle.ForeColor = $colorBlue
 
     $form.Controls.Add($dgv)
     $dgv.BringToFront()
