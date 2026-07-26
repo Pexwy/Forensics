@@ -66,7 +66,7 @@ $formWidth  = 480
 $formHeight = 220
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Alt-Detector"
+$form.Text = "Alt Detector"
 $form.Size = New-Object System.Drawing.Size($formWidth, $formHeight)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "None"
@@ -118,7 +118,7 @@ $closeBtn.BringToFront()
 
 # title
 $titleLabel = New-Object System.Windows.Forms.Label
-$titleLabel.Text = "Alt-Detector"
+$titleLabel.Text = "Alt Detector"
 $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
 $titleLabel.ForeColor = $colorPink
 $titleLabel.AutoSize = $true
