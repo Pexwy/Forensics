@@ -97,12 +97,7 @@ function New-MainForm {
     $form.Size          = New-Object Drawing.Size(1100, 780)
     $form.StartPosition = 'CenterScreen'
     $form.MinimumSize   = New-Object Drawing.Size(900, 600)
-   try {
-    $iconPath = [System.Environment]::SystemDirectory + '\shell32.dll'
-    $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
-} catch {
-    # Fallback: no custom icon, use default
-}
+# Safe icon assignment - no overload issues across .NET versions
     $form.BackColor     = [Drawing.Color]::FromArgb(30, 30, 30)
     $form.Font          = New-Object Drawing.Font('Consolas', 9.5)
 
