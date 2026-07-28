@@ -412,8 +412,10 @@ function Update-UI {
             $Controls.StatusLabel.Text = " $StatusText"
             $Controls.StatusLabel.ForeColor = [Drawing.Color]::$StatusColor
         }
-        # FIX: null guard for Script:ScanStart
-        $elapsed = if ($Script:ScanStart) { [math]::Round((Get-Date - $Script:ScanStart).TotalSeconds, 1) } else { 0 }
+        # FIX: "Get-Date - $Script:ScanStart" parses Get-Date in command mode, where the
+        # bare "-" is bound as an argument (e.g. to -Date) instead of being treated as
+        # subtraction. Wrapping (Get-Date) forces it to evaluate as an expression first.
+        $elapsed = if ($Script:ScanStart) { [math]::Round(((Get-Date) - $Script:ScanStart).TotalSeconds, 1) } else { 0 }
         $Controls.StatusTime.Text = "  |  Elapsed: ${elapsed}s"
         $Controls.StatusCounter.Text = "  |  $($Script:Results.Count) artifact categories"
     })
@@ -630,7 +632,9 @@ function Get-ProcessArtifacts {
     # Suspicious named processes
     $suspicious = Get-Process | Where-Object {
         $_.ProcessName -match ($Script:SusKeywords -join '|')
-    } | Select-Object ProcessName, Id, @{N='StartTime';E={$_.StartTime.ToLocalTime()}}, CPU, SessionId
+    } | Select-Object ProcessName, Id,
+        @{N='StartTime'; E={ try { $_.StartTime.ToLocalTime() } catch { $null } }},
+        CPU, SessionId
 
     if ($suspicious) {
         Update-UI -Controls $Controls -LogMessage "  → Found $($suspicious.Count) suspicious processes."
@@ -641,14 +645,20 @@ function Get-ProcessArtifacts {
     $allProcs = Get-Process | ForEach-Object {
         $p = $_
         $parentId = try { (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction Stop).ParentProcessId } catch { $null }
+        # FIX: protected/system processes (Idle, System, Secure System, Registry, etc.)
+        # can throw or return null when reading StartTime/CPU, which crashed the whole
+        # scan with "cannot call a method on a null-valued expression" on .ToLocalTime().
+        $startTime = try { $p.StartTime.ToLocalTime() } catch { $null }
+        $cpu       = try { [math]::Round($p.CPU, 2) } catch { $null }
+        $ws        = try { [math]::Round($p.WorkingSet / 1MB, 1) } catch { $null }
         [PSCustomObject]@{
             ProcessName = $p.ProcessName
             PID         = $p.Id
             SessionId   = $p.SessionId
-            StartTime   = $p.StartTime.ToLocalTime()
+            StartTime   = $startTime
             ParentPID   = $parentId
-            CPU         = [math]::Round($p.CPU, 2)
-            WS          = [math]::Round($p.WorkingSet / 1MB, 1)
+            CPU         = $cpu
+            WS          = $ws
         }
     }
     Add-Result -Category 'AllRunningProcesses' -Severity Info -Data $allProcs
