@@ -7,7 +7,7 @@
     progress-tracked GUI, expanded detection coverage, and categorized results.
 .NOTES
     Run as Administrator for full artifact collection. No dependencies required
-    beyond built-in .NET assemblies.
+    beyond built-in .NET assemblies. Compatible with irm | iex execution.
 #>
 
 [CmdletBinding()]
@@ -68,16 +68,6 @@ $Script:HighRiskIPRanges = @(
     '^2\.',   '^109\.', '^128\.', '^159\.','^212\.',
     '^213\.', '^217\.'
 )
-
-# Known cheat DLLs and their MD5/SHA1 prefixes (partial matches)
-$Script:KnownCheatHashes = @{
-    'cheatengine'        = @('A8C0B1', 'E2F3A4', '7D4E9B')
-    'artmoney'           = @('B3F1C2', 'D5E6A7')
-    'tsearch'            = @('C4D5E6', 'F7A8B9')
-    'wemod'              = @('1A2B3C', '4D5E6F')
-    'flingtrainer'       = @('7A8B9C', '0D1E2F')
-    'fearlessrevolution' = @('3A4B5C', '6D7E8F')
-}
 
 # Registry Run/MRU paths
 $Script:RunKeyPaths = @(
@@ -459,7 +449,9 @@ function Show-Detail {
     $data = $result.Data
     if ($data -is [array] -and $data.Count -gt 0) {
         $sb.AppendLine("Total items: $($data.Count)`n") | Out-Null
-        $sb.Append($data | Format-Table -AutoSize -Wrap | Out-String -Width 200) | Out-Null
+        # FIX: capture pipeline output to variable first to avoid irm|iex parser issue
+        $formatted = $data | Format-Table -AutoSize -Wrap | Out-String -Width 200
+        $sb.Append($formatted) | Out-Null
     } elseif ($data -is [string] -and $data.Length -gt 0) {
         $sb.AppendLine($data) | Out-Null
     } else {
@@ -700,11 +692,6 @@ function Get-UserAssistArtifacts {
     }
 
     if ($entries) {
-        # Try to decode ROT13 encoded entries
-        $decoded = $entries | ForEach-Object {
-            $props = $_.PSObject.Properties | Where-Object { $_.Name -notmatch '^(PSPath|PSParentPath|PSChildName|PSDrive|PSProvider)$' }
-            $props | Select-Object @{N='Key';E={$_.Name}}, @{N='Value';E={$_.Value}}
-        }
         Add-Result -Category 'UserAssistHistory' -Severity Info -Data $entries
         Update-UI -Controls $Controls -LogMessage "  → $($entries.Count) UserAssist entries captured."
     }
@@ -734,10 +721,13 @@ function Get-AppCompatArtifacts {
 function Get-FilesystemArtifacts {
     param($Controls)
 
+    $targetDirs = @("$env:TEMP","$env:APPDATA","$env:LOCALAPPDATA",
+                    "$env:PROGRAMDATA","$env:USERPROFILE\Downloads",
+                    "$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents")
     $patterns = $Script:SusKeywords | ForEach-Object { "*${_}*" } + @('*.asi', '*.crack', '*.trainer')
     $found = @()
 
-    foreach ($dir in $Script:TargetDirectories) {
+    foreach ($dir in $targetDirs) {
         if (-not (Test-Path $dir)) { continue }
         foreach ($pattern in $patterns) {
             $found += Get-ChildItem $dir -Filter $pattern -Depth 1 -ErrorAction SilentlyContinue |
@@ -761,7 +751,7 @@ function Get-FilesystemArtifacts {
     }
 
     # Check for memory dump files
-    $dumps = Get-ChildItem "$env:TEMP" -Filter '*.dmp' -Depth 1 -ErrorAction SilentlyContinuous
+    $dumps = Get-ChildItem "$env:TEMP" -Filter '*.dmp' -Depth 1 -ErrorAction SilentlyContinue
     if ($dumps) {
         Add-Result -Category 'MemoryDumps' -Severity Medium -Data $dumps
         Update-UI -Controls $Controls -LogMessage "  → $($dumps.Count) memory dump files found."
@@ -771,7 +761,7 @@ function Get-FilesystemArtifacts {
 function Get-RecentFileArtifacts {
     param($Controls)
 
-    # Recent items (shellbag-like via registry)
+    # Recent items
     $recentDocs = Get-ChildItem "$env:USERPROFILE\Recent" -ErrorAction SilentlyContinue |
         Where-Object { -not $_.PSIsContainer } |
         Select-Object Name, Length, LastWriteTime
@@ -955,7 +945,7 @@ function Get-SysmonArtifacts {
         Update-UI -Controls $Controls -LogMessage "  → Sysmon Event 11 error: $($_.Exception.Message)"
     }
 
-    # Event 15: File stream creation (alternate data streams - common for hiding cheats)
+    # Event 15: File stream creation (alternate data streams)
     try {
         $sysmon15 = Get-WinEvent -FilterHashtable @{
             LogName   = 'Microsoft-Windows-Sysmon/Operational'
@@ -1185,12 +1175,13 @@ function Get-NetworkArtifacts {
         $fwEntries = Get-Content $fwLog -Tail 200 -ErrorAction SilentlyContinue |
             Where-Object { $_ -notmatch '^\#' -and $_ -match $Script:SessionStart.ToString('yyyy-MM-dd') }
         if ($fwEntries) {
-            Add-Result -Category 'WindowsFirewallLog' -Severity Info -Data ($fwEntries -join "`n")
+            $fwText = $fwEntries -join "`n"
+            Add-Result -Category 'WindowsFirewallLog' -Severity Info -Data $fwText
             Update-UI -Controls $Controls -LogMessage "  → $($fwEntries.Count) firewall log entries for session period."
         }
     }
 
-    # Browsing history: check for cheat sites in Edge/Chrome/Firefox history
+    # Browser history database locations
     $browsers = @(
         "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\History",
         "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\History",
@@ -1368,7 +1359,8 @@ function Get-WmiPowerShellArtifacts {
             }
         }
         if ($susCommands.Count -gt 0) {
-            Add-Result -Category 'PowerShellHistory_Suspicious' -Severity High -Data ($susCommands -join "`n")
+            $susText = $susCommands -join "`n"
+            Add-Result -Category 'PowerShellHistory_Suspicious' -Severity High -Data $susText
             Update-UI -Controls $Controls -LogMessage "  → $($susCommands.Count) suspicious PowerShell commands in history."
         }
         Add-Result -Category 'PowerShellHistory' -Severity Info -Data $psHistory
@@ -1426,8 +1418,10 @@ function Export-Report {
             $sb.AppendLine("[$($result.Severity)] $($result.Category)") | Out-Null
             $sb.AppendLine("-" * 60) | Out-Null
             if ($result.Data -is [array] -and $result.Data.Count -gt 0) {
-                $sb.Append("  ") | Out-Null
-                $sb.Append(($result.Data | Format-Table -AutoSize -Wrap | Out-String -Width 120)) | Out-Null
+                # FIX: capture pipeline to variable first
+                $rawOutput = $result.Data | Format-Table -AutoSize -Wrap | Out-String -Width 120
+                $indented = ($rawOutput -split "`r`n" | ForEach-Object { "  $_" }) -join "`r`n"
+                $sb.AppendLine($indented) | Out-Null
             } elseif ($result.Data -is [string]) {
                 $sb.AppendLine("  $($result.Data)") | Out-Null
             } else {
