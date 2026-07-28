@@ -1492,10 +1492,66 @@ function New-HtmlReport{param($Results,[string]$OutFile)
     $tabButtons=[System.Text.StringBuilder]::new();$tabPanels=[System.Text.StringBuilder]::new();$i=0
     foreach($result in $ordered){$i++;$tabId="tab-$i";$sevSlug=$result.Severity.ToString().ToLower();$safeCat=ConvertTo-HtmlSafe($result.Category)
         $itemCount=if($result.Data -is [array]){$result.Data.Count}elseif($result.Data -is [string] -and $result.Data.Length -gt 0){1}else{0}
-        $tabButtons.Append(@"<button class="tab-btn sev-$sevSlug" data-target="$tabId" style="animation-delay:$($i*0.04)s"><span class="dot"></span><span class="tab-label">$safeCat</span><span class="tab-count">$itemCount</span></button>"@)|Out-Null
+        $btnHtml=[string]::Format('<button class="tab-btn sev-{0}" data-target="{1}" style="animation-delay:{2}s"><span class="dot"></span><span class="tab-label">{3}</span><span class="tab-count">{4}</span></button>',$sevSlug,$tabId,($i*0.04),$safeCat,$itemCount)
+        $tabButtons.AppendLine($btnHtml)|Out-Null
         $dataHtml=ConvertTo-DataHtml -Data $result.Data
-        $tabPanels.Append(@"<section class="panel" id="$tabId"><div class="panel-head"><h2>$safeCat</h2><span class="badge sev-$sevSlug">$($result.Severity)</span><span class="timestamp">Detected $($result.Timestamp.ToString('yyyy-MM-dd HH:mm:ss'))</span></div><div class="panel-body">$dataHtml</div></section>"@)|Out-Null
+        $panelHtml=[string]::Format('<section class="panel" id="{0}"><div class="panel-head"><h2>{1}</h2><span class="badge sev-{2}">{3}</span><span class="timestamp">Detected {4}</span></div><div class="panel-body">{5}</div></section>',$tabId,$safeCat,$sevSlug,$result.Severity,$result.Timestamp.ToString('yyyy-MM-dd HH:mm:ss'),$dataHtml)
+        $tabPanels.AppendLine($panelHtml)|Out-Null
     }
+    if($ordered.Count -eq 0){$tabButtons.AppendLine('<span class="empty">No categories.</span>')|Out-Null;$tabPanels.AppendLine('<section class="panel active"><p class="empty">No artifacts recorded.</p></section>')|Out-Null}
+    $generatedAt=Get-Date;$osCaption=try{(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption}catch{'Unknown'}
+    $summaryChips=[string]::Format('<span class="chip"><span class="swatch" style="background:var(--crit)"></span>Critical <b>{0}</b></span><span class="chip"><span class="swatch" style="background:var(--high)"></span>High <b>{1}</b></span><span class="chip"><span class="swatch" style="background:var(--med)"></span>Medium <b>{2}</b></span><span class="chip"><span class="swatch" style="background:var(--low)"></span>Low <b>{3}</b></span><span class="chip"><span class="swatch" style="background:var(--info)"></span>Info <b>{4}</b></span>',$counts.Critical,$counts.High,$counts.Medium,$counts.Low,$counts.Info)
+    $privText=if($isAdmin){'Administrator'}else{'Standard User'}
+    $metaLine=[string]::Format('Host: {0} &nbsp;|&nbsp; OS: {1} &nbsp;|&nbsp; Generated: {2} &nbsp;|&nbsp; Privilege: {3}',(ConvertTo-HtmlSafe($env:COMPUTERNAME)),(ConvertTo-HtmlSafe($osCaption)),$generatedAt.ToString('yyyy-MM-dd HH:mm:ss'),$privText)
+    $html=@"
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Forensic Scan Report</title>
+<style>
+:root{--bg:#0c0c10;--panel:#15151b;--panel-alt:#1c1c24;--border:#2a2a34;--text:#e6e6ee;--muted:#8a8a9a;--accent:#7c5cff;--accent-2:#22d3ee;--crit:#ff4d6d;--high:#ff9f43;--med:#ffd166;--low:#9aa5ff;--info:#4fd1c5}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Consolas','Cascadia Code','Segoe UI',monospace;background:radial-gradient(circle at 20% -10%,#1a1030 0%,var(--bg) 55%);color:var(--text);min-height:100vh}
+header{padding:28px 36px 20px;border-bottom:1px solid var(--border);background:linear-gradient(120deg,rgba(124,92,255,0.12),rgba(34,211,238,0.06));animation:fadeDown .5s ease both}
+header h1{margin:0 0 6px;font-size:22px;background:linear-gradient(90deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+header .meta{color:var(--muted);font-size:12.5px;line-height:1.6}
+.summary{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
+.summary .chip{padding:8px 14px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--panel-alt);display:flex;align-items:center;gap:8px;opacity:0;animation:popIn .4s ease forwards}
+.summary .chip b{font-size:14px}.swatch{width:9px;height:9px;border-radius:50%;display:inline-block}
+main{display:grid;grid-template-columns:300px 1fr;gap:0;min-height:calc(100vh - 130px)}
+nav.tabs{border-right:1px solid var(--border);padding:18px 12px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;max-height:calc(100vh - 130px)}
+.tab-btn{all:unset;cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;color:var(--text);font-size:12.5px;border:1px solid transparent;opacity:0;animation:slideIn .35s ease forwards;transition:background .2s ease,transform .15s ease,border-color .2s ease}
+.tab-btn:hover{background:var(--panel-alt);transform:translateX(2px)}.tab-btn.active{background:var(--panel-alt);border-color:var(--border);box-shadow:inset 3px 0 0 var(--accent)}
+.tab-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tab-count{font-size:10.5px;color:var(--muted);background:rgba(255,255,255,0.06);padding:2px 7px;border-radius:999px}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}.sev-critical .dot,.badge.sev-critical{background:var(--crit)}.sev-high .dot,.badge.sev-high{background:var(--high)}.sev-medium .dot,.badge.sev-medium{background:var(--med);color:#20140a}.sev-low .dot,.badge.sev-low{background:var(--low);color:#101018}.sev-info .dot,.badge.sev-info{background:var(--info);color:#08201d}
+.badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:bold;color:#1a0510}
+section.panel{display:none;padding:28px 34px;animation:fadeUp .4s ease both}section.panel.active{display:block}
+.panel-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--border)}
+.panel-head h2{margin:0;font-size:17px}.timestamp{color:var(--muted);font-size:12px;margin-left:auto}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}
+thead th{text-align:left;padding:10px 12px;background:var(--panel-alt);color:var(--accent-2);position:sticky;top:0;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis}
+tbody tr{opacity:0;animation:rowIn .3s ease forwards}tbody tr:hover{background:rgba(124,92,255,0.08)}
+.raw-block{background:var(--panel-alt);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto}
+.plain-list{font-size:12px;line-height:1.8;padding-left:20px}.empty{color:var(--muted);font-style:italic}
+footer{padding:16px 34px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
+@keyframes fadeDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+@keyframes popIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+@keyframes rowIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}::-webkit-scrollbar-track{background:transparent}
+</style></head><body>
+<header><h1>⟡ Game Cheat Forensic Report</h1><div class="meta">$metaLine</div>
+<div class="summary">$summaryChips</div></header>
+<main><nav class="tabs">$($tabButtons.ToString())</nav><div class="panels">$($tabPanels.ToString())</div></main>
+<footer>Generated by HackerAI Forensics Scanner v2.1</footer>
+<script>
+const b=document.querySelectorAll('.tab-btn'),p=document.querySelectorAll('.panel');
+function a(i){b.forEach((x,j)=>x.classList.toggle('active',j===i));p.forEach((x,j)=>x.classList.toggle('active',j===i))}
+b.forEach((x,i)=>x.addEventListener('click',()=>a(i)));if(b.length)a(0);
+</script></body></html>
+"@
+    [System.IO.File]::WriteAllText($OutFile,$html,[System.Text.Encoding]::UTF8)
+}
     if($ordered.Count -eq 0){$tabButtons.Append('<span class="empty">No categories.</span>')|Out-Null;$tabPanels.Append('<section class="panel active"><p class="empty">No artifacts recorded.</p></section>')|Out-Null}
     $generatedAt=Get-Date;$osCaption=try{(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption}catch{'Unknown'}
     $html=@"
