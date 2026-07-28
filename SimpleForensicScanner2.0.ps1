@@ -253,6 +253,19 @@ function New-MainForm {
     $btnExport.UseVisualStyleBackColor = $false
     $topPanel.Controls.Add($btnExport)
 
+    $btnWebReport = New-Object Windows.Forms.Button
+    $btnWebReport.Name      = 'btnWebReport'
+    $btnWebReport.Location  = New-Object Drawing.Point(940, 152)
+    $btnWebReport.Size      = New-Object Drawing.Size(130, 30)
+    $btnWebReport.Text      = '🌐 Web Report'
+    $btnWebReport.BackColor = [Drawing.Color]::FromArgb(90, 40, 140)
+    $btnWebReport.ForeColor = [Drawing.Color]::White
+    $btnWebReport.FlatStyle = 'Flat'
+    $btnWebReport.Font      = New-Object Drawing.Font('Consolas', 10)
+    $btnWebReport.Enabled   = $false
+    $btnWebReport.UseVisualStyleBackColor = $false
+    $topPanel.Controls.Add($btnWebReport)
+
     $sessionNudLabel = New-Object Windows.Forms.Label
     $sessionNudLabel.Text     = 'Hours back:'
     $sessionNudLabel.ForeColor = [Drawing.Color]::Gray
@@ -377,6 +390,7 @@ function New-MainForm {
         BtnStart     = $btnStart
         BtnCancel    = $btnCancel
         BtnExport    = $btnExport
+        BtnWebReport = $btnWebReport
         SessionNud   = $sessionNud
         SessionApply = $sessionApply
         AdminLabel   = $adminLabel
@@ -598,6 +612,7 @@ function Start-ForensicScan {
     $Controls.BtnStart.Enabled    = $true
     $Controls.BtnCancel.Enabled   = $false
     $Controls.BtnExport.Enabled   = $true
+    $Controls.BtnWebReport.Enabled = $true
     $Controls.SessionNud.Enabled  = $true
     $Controls.SessionApply.Enabled = $true
 
@@ -1432,6 +1447,314 @@ function Add-Result {
 }
 
 # ---------------------------------------------------------------
+# Web (HTML) report
+# ---------------------------------------------------------------
+
+function ConvertTo-HtmlSafe {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    return $Text.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;').Replace('"', '&quot;').Replace("'", '&#39;')
+}
+
+function ConvertTo-DataHtml {
+    # Renders a single result's Data payload as an HTML table (array of objects)
+    # or a preformatted block (string), with every value escaped.
+    param($Data)
+
+    if ($Data -is [array] -or ($Data -is [System.Collections.IEnumerable] -and $Data -isnot [string])) {
+        $items = @($Data)
+        if ($items.Count -eq 0) { return '<p class="empty">No items.</p>' }
+
+        # Collect a stable set of column names from the first few objects
+        $propNames = [System.Collections.Generic.List[string]]::new()
+        foreach ($item in $items | Select-Object -First 25) {
+            if ($item -is [PSObject]) {
+                foreach ($p in $item.PSObject.Properties) {
+                    if (-not $propNames.Contains($p.Name)) { $propNames.Add($p.Name) }
+                }
+            }
+        }
+        if ($propNames.Count -eq 0) {
+            # Fallback: plain list of stringified items
+            $rows = ($items | ForEach-Object { "<li>$(ConvertTo-HtmlSafe([string]$_))</li>" }) -join "`n"
+            return "<ul class='plain-list'>$rows</ul>"
+        }
+
+        $sb = [System.Text.StringBuilder]::new()
+        $sb.Append('<div class="table-wrap"><table><thead><tr>') | Out-Null
+        foreach ($p in $propNames) { $sb.Append("<th>$(ConvertTo-HtmlSafe($p))</th>") | Out-Null }
+        $sb.Append('</tr></thead><tbody>') | Out-Null
+
+        $rowIndex = 0
+        foreach ($item in $items) {
+            $rowIndex++
+            $delay = [Math]::Min($rowIndex * 0.02, 1.2)
+            $sb.Append("<tr style='animation-delay: ${delay}s'>") | Out-Null
+            foreach ($p in $propNames) {
+                $val = ''
+                if ($item -is [PSObject] -and $item.PSObject.Properties[$p]) {
+                    $raw = $item.PSObject.Properties[$p].Value
+                    $val = if ($null -eq $raw) { '' } else { [string]$raw }
+                }
+                $sb.Append("<td>$(ConvertTo-HtmlSafe($val))</td>") | Out-Null
+            }
+            $sb.Append('</tr>') | Out-Null
+        }
+        $sb.Append('</tbody></table></div>') | Out-Null
+        return $sb.ToString()
+    }
+    elseif ($Data -is [string] -and $Data.Length -gt 0) {
+        return "<pre class='raw-block'>$(ConvertTo-HtmlSafe($Data))</pre>"
+    }
+    else {
+        return '<p class="empty">No detail data available.</p>'
+    }
+}
+
+function New-HtmlReport {
+    param($Results, [string]$OutFile)
+
+    $isAdmin = [Security.Principal.WindowsPrincipal]::new(
+        [Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    $severityRank = @{ Critical = 0; High = 1; Medium = 2; Low = 3; Info = 4 }
+    $ordered = $Results | Sort-Object { if ($severityRank.ContainsKey($_.Severity)) { $severityRank[$_.Severity] } else { 99 } }
+
+    $counts = @{ Critical = 0; High = 0; Medium = 0; Low = 0; Info = 0 }
+    foreach ($r in $Results) {
+        if ($counts.ContainsKey($r.Severity)) { $counts[$r.Severity]++ }
+    }
+
+    # ---- Build tab buttons + panels ----
+    $tabButtons = [System.Text.StringBuilder]::new()
+    $tabPanels  = [System.Text.StringBuilder]::new()
+    $i = 0
+    foreach ($result in $ordered) {
+        $i++
+        $tabId   = "tab-$i"
+        $sevSlug = $result.Severity.ToString().ToLower()
+        $safeCat = ConvertTo-HtmlSafe($result.Category)
+        $itemCount = if ($result.Data -is [array]) { $result.Data.Count } elseif ($result.Data -is [string] -and $result.Data.Length -gt 0) { 1 } else { 0 }
+
+        $tabButtons.Append(@"
+<button class="tab-btn sev-$sevSlug" data-target="$tabId" style="animation-delay: $($i * 0.04)s">
+  <span class="dot"></span>
+  <span class="tab-label">$safeCat</span>
+  <span class="tab-count">$itemCount</span>
+</button>
+"@) | Out-Null
+
+        $dataHtml = ConvertTo-DataHtml -Data $result.Data
+
+        $tabPanels.Append(@"
+<section class="panel" id="$tabId">
+  <div class="panel-head">
+    <h2>$safeCat</h2>
+    <span class="badge sev-$sevSlug">$($result.Severity)</span>
+    <span class="timestamp">Detected $($result.Timestamp.ToString('yyyy-MM-dd HH:mm:ss'))</span>
+  </div>
+  <div class="panel-body">
+    $dataHtml
+  </div>
+</section>
+"@) | Out-Null
+    }
+
+    if ($ordered.Count -eq 0) {
+        $tabButtons.Append('<span class="empty">No categories to display.</span>') | Out-Null
+        $tabPanels.Append('<section class="panel active"><p class="empty">No forensic artifacts were recorded in this scan.</p></section>') | Out-Null
+    }
+
+    $generatedAt = Get-Date
+    $osCaption = try { (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption } catch { 'Unknown' }
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Forensic Scan Report — $env:COMPUTERNAME</title>
+<style>
+  :root {
+    --bg: #0c0c10;
+    --panel: #15151b;
+    --panel-alt: #1c1c24;
+    --border: #2a2a34;
+    --text: #e6e6ee;
+    --muted: #8a8a9a;
+    --accent: #7c5cff;
+    --accent-2: #22d3ee;
+    --crit: #ff4d6d;
+    --high: #ff9f43;
+    --med: #ffd166;
+    --low: #9aa5ff;
+    --info: #4fd1c5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Consolas', 'Cascadia Code', 'Segoe UI', monospace;
+    background: radial-gradient(circle at 20% -10%, #1a1030 0%, var(--bg) 55%);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 28px 36px 20px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(120deg, rgba(124,92,255,0.12), rgba(34,211,238,0.06));
+    animation: fadeDown 0.5s ease both;
+  }
+  header h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    letter-spacing: 0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  header .meta { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+  .summary {
+    display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;
+  }
+  .summary .chip {
+    padding: 8px 14px; border-radius: 999px; font-size: 12px;
+    border: 1px solid var(--border); background: var(--panel-alt);
+    display: flex; align-items: center; gap: 8px;
+    opacity: 0; animation: popIn 0.4s ease forwards;
+  }
+  .summary .chip b { font-size: 14px; }
+  .summary .chip:nth-child(1){animation-delay:.05s}
+  .summary .chip:nth-child(2){animation-delay:.1s}
+  .summary .chip:nth-child(3){animation-delay:.15s}
+  .summary .chip:nth-child(4){animation-delay:.2s}
+  .summary .chip:nth-child(5){animation-delay:.25s}
+  .swatch { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  main {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 130px);
+  }
+  nav.tabs {
+    border-right: 1px solid var(--border);
+    padding: 18px 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    overflow-y: auto;
+    max-height: calc(100vh - 130px);
+  }
+  .tab-btn {
+    all: unset;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px;
+    color: var(--text); font-size: 12.5px;
+    border: 1px solid transparent;
+    opacity: 0; animation: slideIn 0.35s ease forwards;
+    transition: background 0.2s ease, transform 0.15s ease, border-color 0.2s ease;
+  }
+  .tab-btn:hover { background: var(--panel-alt); transform: translateX(2px); }
+  .tab-btn.active { background: var(--panel-alt); border-color: var(--border); box-shadow: inset 3px 0 0 var(--accent); }
+  .tab-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab-count {
+    font-size: 10.5px; color: var(--muted); background: rgba(255,255,255,0.06);
+    padding: 2px 7px; border-radius: 999px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .sev-critical .dot, .badge.sev-critical { background: var(--crit); }
+  .sev-high .dot, .badge.sev-high { background: var(--high); }
+  .sev-medium .dot, .badge.sev-medium { background: var(--med); color:#20140a; }
+  .sev-low .dot, .badge.sev-low { background: var(--low); color:#101018; }
+  .sev-info .dot, .badge.sev-info { background: var(--info); color:#08201d; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: bold; color: #1a0510; }
+
+  section.panel {
+    display: none;
+    padding: 28px 34px;
+    animation: fadeUp 0.4s ease both;
+  }
+  section.panel.active { display: block; }
+  .panel-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border);
+  }
+  .panel-head h2 { margin: 0; font-size: 17px; }
+  .timestamp { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  thead th {
+    text-align: left; padding: 10px 12px; background: var(--panel-alt);
+    color: var(--accent-2); position: sticky; top: 0; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  tbody tr { opacity: 0; animation: rowIn 0.3s ease forwards; }
+  tbody tr:hover { background: rgba(124,92,255,0.08); }
+  .raw-block {
+    background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow: auto;
+  }
+  .plain-list { font-size: 12px; line-height: 1.8; padding-left: 20px; }
+  .empty { color: var(--muted); font-style: italic; }
+  footer { padding: 16px 34px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
+
+  @keyframes fadeDown { from { opacity: 0; transform: translateY(-8px);} to { opacity: 1; transform: translateY(0);} }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px);} to { opacity: 1; transform: translateY(0);} }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(-8px);} to { opacity: 1; transform: translateX(0);} }
+  @keyframes popIn { from { opacity: 0; transform: scale(0.9);} to { opacity: 1; transform: scale(1);} }
+  @keyframes rowIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: translateY(0);} }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>⟡ Game Cheat Forensic Report</h1>
+    <div class="meta">
+      Host: $(ConvertTo-HtmlSafe($env:COMPUTERNAME))  &nbsp;|&nbsp;
+      OS: $(ConvertTo-HtmlSafe($osCaption))  &nbsp;|&nbsp;
+      Generated: $($generatedAt.ToString('yyyy-MM-dd HH:mm:ss'))  &nbsp;|&nbsp;
+      Privilege: $(if ($isAdmin) { 'Administrator' } else { 'Standard User' })
+    </div>
+    <div class="summary">
+      <span class="chip"><span class="swatch" style="background:var(--crit)"></span>Critical <b>$($counts.Critical)</b></span>
+      <span class="chip"><span class="swatch" style="background:var(--high)"></span>High <b>$($counts.High)</b></span>
+      <span class="chip"><span class="swatch" style="background:var(--med)"></span>Medium <b>$($counts.Medium)</b></span>
+      <span class="chip"><span class="swatch" style="background:var(--low)"></span>Low <b>$($counts.Low)</b></span>
+      <span class="chip"><span class="swatch" style="background:var(--info)"></span>Info <b>$($counts.Info)</b></span>
+    </div>
+  </header>
+  <main>
+    <nav class="tabs">
+      $($tabButtons.ToString())
+    </nav>
+    <div class="panels">
+      $($tabPanels.ToString())
+    </div>
+  </main>
+  <footer>Generated by HackerAI Forensics Scanner v2.1 — this file is self-contained and safe to share; no external scripts are loaded.</footer>
+
+<script>
+  const buttons = document.querySelectorAll('.tab-btn');
+  const panels  = document.querySelectorAll('.panel');
+  function activate(idx) {
+    buttons.forEach((b, i) => b.classList.toggle('active', i === idx));
+    panels.forEach((p, i) => p.classList.toggle('active', i === idx));
+  }
+  buttons.forEach((btn, idx) => btn.addEventListener('click', () => activate(idx)));
+  if (buttons.length) activate(0);
+</script>
+</body>
+</html>
+"@
+
+    [System.IO.File]::WriteAllText($OutFile, $html, [System.Text.Encoding]::UTF8)
+}
+
+# ---------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------
 
@@ -1440,11 +1763,21 @@ function Export-Report {
 
     $saveDlg = New-Object Windows.Forms.SaveFileDialog
     $saveDlg.Title    = 'Save Forensic Report'
-    $saveDlg.Filter   = 'Text Report (*.txt)|*.txt|CSV Summary (*.csv)|*.csv|All Files (*.*)|*.*'
+    $saveDlg.Filter   = 'HTML Report (*.html)|*.html|Text Report (*.txt)|*.txt|CSV Summary (*.csv)|*.csv|All Files (*.*)|*.*'
     $saveDlg.FileName = "CheatForensics_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
     $saveDlg.InitialDirectory = [Environment]::GetFolderPath('Desktop')
 
     if ($saveDlg.ShowDialog() -ne 'OK') { return }
+
+    if ([System.IO.Path]::GetExtension($saveDlg.FileName) -eq '.html') {
+        try {
+            New-HtmlReport -Results $Script:Results -OutFile $saveDlg.FileName
+            Update-UI -Controls $Controls -LogMessage "HTML report exported to: $($saveDlg.FileName)" -StatusText 'Report Exported' -StatusColor 'LightGreen'
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("Export failed: $($_.Exception.Message)", 'Export Error', 'OK', 'Error')
+        }
+        return
+    }
 
     try {
         $sb = [System.Text.StringBuilder]::new()
@@ -1520,6 +1853,17 @@ $controls.BtnCancel.Add_Click({
 
 $controls.BtnExport.Add_Click({
     Export-Report -Controls $controls
+})
+
+$controls.BtnWebReport.Add_Click({
+    try {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) "CheatForensics_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
+        New-HtmlReport -Results $Script:Results -OutFile $tempFile
+        Start-Process $tempFile
+        Update-UI -Controls $controls -LogMessage "Web report opened in browser: $tempFile" -StatusText 'Web Report Opened' -StatusColor 'LightGreen'
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Could not open web report: $($_.Exception.Message)", 'Web Report Error', 'OK', 'Error')
+    }
 })
 
 $controls.SessionApply.Add_Click({
