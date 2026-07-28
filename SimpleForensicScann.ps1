@@ -1031,120 +1031,225 @@ function Get-FileActivityTimeline {
 }
 
 # ================================================================
-# NEW MODULE 2: Deleted File Artifacts
+# OPTIMIZED MODULE 2: Deleted File Artifacts (No Freezing)
 # ================================================================
 function Get-DeletedFileArtifacts {
     param($Controls)
 
     $deletedEvidence = [System.Collections.Generic.List[object]]::new()
+    
+    # Update UI to show we're starting
+    Update-UI -Controls $Controls -LogMessage '  → Scanning for deleted file artifacts...' -StatusText 'Scanning deleted files...' -StatusColor 'Yellow'
 
-    # 2b: Prefetch files for now-deleted executables
-    $pfDir = 'C:\Windows\Prefetch'
-    if (Test-Path $pfDir) {
-        $pfFiles = Get-ChildItem "$pfDir\*.pf" -ErrorAction SilentlyContinue
-        $orphanedPrefetch = $pfFiles | Where-Object {
-            # Extract base name without hash
-            $baseName = $_.Name -replace '-[0-9A-F]{8}\.pf$', '' -replace '\.exe$', ''
-            $exePath = Get-ChildItem -Path "$env:SYSTEMDRIVE\Program Files", "$env:SYSTEMDRIVE\Program Files (x86)", "$env:SYSTEMDRIVE\Windows", "$env:TEMP", "$env:APPDATA", "$env:LOCALAPPDATA", "$env:USERPROFILE\Downloads" -Filter "${baseName}.exe" -Recurse -ErrorAction SilentlyContinue
-            -not $exePath -and $_.LastWriteTime -gt $Script:SessionStart
-        } | Select-Object Name, @{N='LastRun';E={$_.LastWriteTime}}, @{N='Executable';E={$_ -replace '-[0-9A-F]{8}\.pf$', ''}}
-
-        if ($orphanedPrefetch) {
-            $orphanedPrefetch | ForEach-Object {
-                $deletedEvidence.Add([PSCustomObject]@{
-                    Artifact='Orphaned Prefetch (EXE deleted)'
-                    File=$_.Name
-                    Executable=$_.Executable
-                    LastRun=$_.LastRun
-                    Detail='Prefetch file exists but the executable is no longer on disk — indicates a now-deleted cheat/injector.'
-                })
-            }
-            Update-UI -Controls $Controls -LogMessage "  → ⚠ $($orphanedPrefetch.Count) orphaned Prefetch files (deleted executables)."
-        }
-    }
-
-    # 2c: Windows Event 4663 (attempted deletion via audit)
+    # 2b: Prefetch files for now-deleted executables (OPTIMIZED)
     try {
-        $deleteAttempts = Get-WinEvent -FilterHashtable @{LogName='Security';ID=4663;StartTime=$Script:SessionStart;EndTime=$Script:SessionEnd} -MaxEvents 2000 -ErrorAction Stop | Where-Object {
-            $xml=[xml]$_.ToXml();$d=@{};$xml.Event.EventData.Data|ForEach-Object{$d[$_.Name]=$_.'#text'}
-            $d['AccessMask'] -match 'DELETE|0x10000' -and $d['FileName'] -match ($Script:SusKeywords -join '|')
-        } | ForEach-Object {
-            $xml=[xml]$_.ToXml();$d=@{};$xml.Event.EventData.Data|ForEach-Object{$d[$_.Name]=$_.'#text'}
-            [PSCustomObject]@{Time=$_.TimeCreated;Action='File Deleted (Audit)';User=$d['SubjectUserName'];File=$d['FileName'];Process=$d['ProcessName']}
-        }
-        if($deleteAttempts){$deleteAttempts|ForEach-Object{$deletedEvidence.Add($_)}; Update-UI -Controls $Controls -LogMessage "  → ⚠ $($deleteAttempts.Count) audited file deletions of cheat-named files."}
-    } catch {}
-
-    # 2d: Recent file shortcuts that point to now-missing locations
-    try {
-        $recentShortcuts = Get-ChildItem "$env:USERPROFILE\Recent" -Filter '*.lnk' -ErrorAction SilentlyContinue | ForEach-Object {
-            $shell = New-Object -ComObject WScript.Shell
-            $shortcut = $shell.CreateShortcut($_.FullName)
-            $target = $shortcut.TargetPath
-            if ($target -and -not (Test-Path $target) -and $target -match ($Script:SusKeywords -join '|')) {
-                [PSCustomObject]@{
-                    Artifact='Deleted File Shortcut'
-                    Shortcut=$_.Name
-                    Target=$target
-                    Created=$_.CreationTime
-                    Modified=$_.LastWriteTime
+        $pfDir = 'C:\Windows\Prefetch'
+        if (Test-Path $pfDir) {
+            # Limit the search to only recent prefetch files
+            $cutoffDate = (Get-Date).AddHours(-$SessionHours)
+            $pfFiles = Get-ChildItem "$pfDir\*.pf" -ErrorAction SilentlyContinue | 
+                Where-Object { $_.LastWriteTime -gt $cutoffDate } |
+                Select-Object -First 100  # LIMIT to prevent freezing
+            
+            $orphanedPrefetch = @()
+            $processed = 0
+            $total = $pfFiles.Count
+            
+            foreach ($pfFile in $pfFiles) {
+                $processed++
+                if ($processed % 10 -eq 0) {
+                    Update-UI -Controls $Controls -LogMessage "  → Processing prefetch $processed/$total..." -StatusText "Scanning prefetch..." -StatusColor 'Yellow'
                 }
-            }
-        }
-        if ($recentShortcuts) { $recentShortcuts | ForEach-Object { $deletedEvidence.Add($_) }; Update-UI -Controls $Controls -LogMessage "  → ⚠ $($recentShortcuts.Count) shortcuts point to now-deleted cheat files." }
-    } catch {}
-
-    # 2e: UserAssist entries for now-deleted applications
-    try {
-        $uaPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist'
-        Get-ChildItem $uaPath -ErrorAction SilentlyContinue | ForEach-Object {
-            $guid = $_.PSChildName
-            $uaData = Get-ItemProperty "${uaPath}\${guid}\Count" -ErrorAction SilentlyContinue
-            if ($uaData) {
-                $uaData.PSObject.Properties | Where-Object { $_.Name -notmatch 'PSPath|PSParentPath|PSChildName|PSDrive|PSProvider' } | ForEach-Object {
-                    $name = $_.Name
-                    # Decode ROT-13 in UserAssist
-                    $decoded = ''
-                    foreach ($c in $name.ToCharArray()) {
-                        if ($c -ge 'a' -and $c -le 'z') { $decoded += [char]((([int]$c) - 97 + 13) % 26 + 97) }
-                        elseif ($c -ge 'A' -and $c -le 'Z') { $decoded += [char]((([int]$c) - 65 + 13) % 26 + 65) }
-                        else { $decoded += $c }
-                    }
-                    if ($decoded -match ($Script:SusKeywords -join '|')) {
-                        # Check if the file still exists
-                        $exeMatch = $decoded -match '([A-Za-z]:\\[^Z]+\.exe)'
-                        if ($exeMatch -and -not (Test-Path $matches[1])) {
-                            $deletedEvidence.Add([PSCustomObject]@{
-                                Artifact='Deleted EXE in UserAssist'
-                                Executable=$decoded
-                                RunCount=$_.Value
-                                Detail='This executable was run (tracked in UserAssist) but no longer exists on disk.'
-                            })
+                
+                try {
+                    # Extract base name without hash - more efficient
+                    $baseName = $pfFile.Name -replace '-[0-9A-F]{8,16}\.pf$', '' -replace '\.exe$', ''
+                    if ($baseName.Length -lt 3) { continue }
+                    
+                    # Quick check if it matches suspicious keywords first
+                    $isSuspicious = ($baseName -match ($Script:SusKeywords -join '|'))
+                    if (-not $isSuspicious) { continue }
+                    
+                    # Only check a few common directories, not recursive
+                    $checkDirs = @("$env:SYSTEMDRIVE\Program Files", "$env:SYSTEMDRIVE\Program Files (x86)", 
+                                  "$env:SYSTEMDRIVE\Windows", "$env:TEMP", "$env:APPDATA", "$env:LOCALAPPDATA")
+                    
+                    $exeFound = $false
+                    foreach ($dir in $checkDirs) {
+                        if (Test-Path $dir) {
+                            # Use -Filter not -Recurse for speed
+                            $exePath = Get-ChildItem -Path $dir -Filter "${baseName}.exe" -ErrorAction SilentlyContinue |
+                                Select-Object -First 1
+                            if ($exePath) {
+                                $exeFound = $true
+                                break
+                            }
                         }
                     }
+                    
+                    if (-not $exeFound) {
+                        $orphanedPrefetch += [PSCustomObject]@{
+                            Artifact = 'Orphaned Prefetch (EXE deleted)'
+                            File = $pfFile.Name
+                            Executable = $baseName
+                            LastRun = $pfFile.LastWriteTime
+                            Detail = 'Prefetch file exists but the executable is no longer on disk.'
+                        }
+                    }
+                } catch {
+                    # Skip individual errors
+                }
+            }
+            
+            if ($orphanedPrefetch.Count -gt 0) {
+                $orphanedPrefetch | ForEach-Object { $deletedEvidence.Add($_) }
+                Update-UI -Controls $Controls -LogMessage "  → ⚠ $($orphanedPrefetch.Count) orphaned Prefetch files found."
+            }
+        }
+    } catch {
+        Update-UI -Controls $Controls -LogMessage "  → Prefetch scan error: $($_.Exception.Message)"
+    }
+
+    # 2c: Windows Event 4663 (attempted deletion via audit) - OPTIMIZED
+    try {
+        Update-UI -Controls $Controls -LogMessage "  → Checking audit logs for file deletions..." -StatusText "Checking audit logs..." -StatusColor 'Yellow'
+        
+        # Limit events and use simpler filtering
+        $deleteAttempts = Get-WinEvent -FilterHashtable @{
+            LogName = 'Security'
+            ID = 4663
+            StartTime = $Script:SessionStart
+            EndTime = $Script:SessionEnd
+        } -MaxEvents 500 -ErrorAction Stop | ForEach-Object {
+            try {
+                $xml = [xml]$_.ToXml()
+                $d = @{}
+                $xml.Event.EventData.Data | ForEach-Object { $d[$_.Name] = $_.'#text' }
+                
+                # Quick check before processing
+                $fileName = $d['FileName'] -replace '.*\\', ''
+                if ($fileName -match ($Script:SusKeywords -join '|')) {
+                    [PSCustomObject]@{
+                        Time = $_.TimeCreated
+                        Action = 'File Deleted (Audit)'
+                        User = $d['SubjectUserName']
+                        File = $d['FileName']
+                        Process = $d['ProcessName'] -replace '.*\\', ''
+                    }
+                }
+            } catch { $null }
+        } | Where-Object { $_ -ne $null }
+        
+        if ($deleteAttempts) {
+            $deleteAttempts | ForEach-Object { $deletedEvidence.Add($_) }
+            Update-UI -Controls $Controls -LogMessage "  → ⚠ $($deleteAttempts.Count) audited file deletions found."
+        }
+    } catch {
+        Update-UI -Controls $Controls -LogMessage "  → Audit log check: $($_.Exception.Message)"
+    }
+
+    # 2d: Recent file shortcuts (OPTIMIZED - skip COM objects if too slow)
+    try {
+        Update-UI -Controls $Controls -LogMessage "  → Checking recent shortcuts..." -StatusText "Checking shortcuts..." -StatusColor 'Yellow'
+        
+        $recentPath = "$env:USERPROFILE\Recent"
+        if (Test-Path $recentPath) {
+            $recentShortcuts = Get-ChildItem $recentPath -Filter '*.lnk' -ErrorAction SilentlyContinue |
+                Select-Object -First 50  # LIMIT to prevent freezing
+            
+            $shortcutCount = 0
+            foreach ($shortcut in $recentShortcuts) {
+                try {
+                    $shell = New-Object -ComObject WScript.Shell
+                    $target = $shell.CreateShortcut($shortcut.FullName).TargetPath
+                    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+                    
+                    if ($target -and -not (Test-Path $target) -and $target -match ($Script:SusKeywords -join '|')) {
+                        $deletedEvidence.Add([PSCustomObject]@{
+                            Artifact = 'Deleted File Shortcut'
+                            Shortcut = $shortcut.Name
+                            Target = $target
+                            Created = $shortcut.CreationTime
+                            Modified = $shortcut.LastWriteTime
+                        })
+                        $shortcutCount++
+                    }
+                } catch {
+                    # Skip COM errors
+                }
+            }
+            if ($shortcutCount -gt 0) {
+                Update-UI -Controls $Controls -LogMessage "  → ⚠ $shortcutCount shortcuts point to deleted files."
+            }
+        }
+    } catch {
+        Update-UI -Controls $Controls -LogMessage "  → Shortcut check: $($_.Exception.Message)"
+    }
+
+    # 2e: UserAssist entries (OPTIMIZED - with limits)
+    try {
+        Update-UI -Controls $Controls -LogMessage "  → Checking UserAssist for deleted executables..." -StatusText "Checking UserAssist..." -StatusColor 'Yellow'
+        
+        $uaPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist'
+        if (Test-Path $uaPath) {
+            $uaGuids = Get-ChildItem $uaPath -ErrorAction SilentlyContinue | Select-Object -First 10
+            
+            foreach ($guidItem in $uaGuids) {
+                try {
+                    $guid = $guidItem.PSChildName
+                    $uaData = Get-ItemProperty "${uaPath}\${guid}\Count" -ErrorAction SilentlyContinue
+                    if (-not $uaData) { continue }
+                    
+                    $uaData.PSObject.Properties | Where-Object { 
+                        $_.Name -notmatch 'PSPath|PSParentPath|PSChildName|PSDrive|PSProvider' 
+                    } | ForEach-Object {
+                        try {
+                            $name = $_.Name
+                            # Decode ROT-13
+                            $decoded = ''
+                            foreach ($c in $name.ToCharArray()) {
+                                if ($c -ge 'a' -and $c -le 'z') { 
+                                    $decoded += [char]((([int]$c) - 97 + 13) % 26 + 97) 
+                                } elseif ($c -ge 'A' -and $c -le 'Z') { 
+                                    $decoded += [char]((([int]$c) - 65 + 13) % 26 + 65) 
+                                } else { 
+                                    $decoded += $c 
+                                }
+                            }
+                            
+                            if ($decoded -match ($Script:SusKeywords -join '|')) {
+                                # Check if the file still exists
+                                $exeMatch = $decoded -match '([A-Za-z]:\\[^Z]+\.exe)'
+                                if ($exeMatch) {
+                                    $exePath = $matches[1]
+                                    if (-not (Test-Path $exePath)) {
+                                        $deletedEvidence.Add([PSCustomObject]@{
+                                            Artifact = 'Deleted EXE in UserAssist'
+                                            Executable = $decoded
+                                            RunCount = $_.Value
+                                            Detail = 'This executable was run but no longer exists on disk.'
+                                        })
+                                    }
+                                }
+                            }
+                        } catch {
+                            # Skip individual errors
+                        }
+                    }
+                } catch {
+                    # Skip GUID errors
                 }
             }
         }
-        Update-UI -Controls $Controls -LogMessage "  → Scanned UserAssist for deleted executable references."
-    } catch {}
-
-    # 2f: Known $Recycle.Bin indicators (files that passed through recycle bin)
-    $recyclePath = "$env:SYSTEMDRIVE`$Recycle.Bin"
-    if (Test-Path $recyclePath) {
-        # Can't enumerate directly, but we can check size/change time
-        $recycleInfo = Get-Item $recyclePath -ErrorAction SilentlyContinue
-        if ($recycleInfo -and $recycleInfo.LastWriteTime -gt $Script:SessionStart) {
-            $deletedEvidence.Add([PSCustomObject]@{
-                Artifact='Recycle Bin Activity'
-                LastModified=$recycleInfo.LastWriteTime
-                Detail='Recycle Bin was modified within the session window — files may have been deleted through the Recycle Bin.'
-            })
-        }
+        Update-UI -Controls $Controls -LogMessage "  → UserAssist scan complete."
+    } catch {
+        Update-UI -Controls $Controls -LogMessage "  → UserAssist check: $($_.Exception.Message)"
     }
 
+    # Add results if found
     if ($deletedEvidence.Count -gt 0) {
         Add-Result -Category 'Forensics_DeletedFileArtifacts' -Severity Critical -Data $deletedEvidence
-        Update-UI -Controls $Controls -LogMessage "  → ⚠ $($deletedEvidence.Count) deleted file artifacts found."
+        Update-UI -Controls $Controls -LogMessage "  → ⚠ $($deletedEvidence.Count) deleted file artifacts found." -StatusText 'Deleted artifacts found' -StatusColor 'Red'
     } else {
         Update-UI -Controls $Controls -LogMessage '  → No deleted file artifacts detected.'
     }
