@@ -865,8 +865,8 @@ function Invoke-NetworkIndicatorsScan {
     foreach ($conn in $tcpConnections) {
         $remoteAddr = $conn.RemoteAddress
         if ($remoteAddr -in $script:KnownCheatIPs) {
-            # CORRECTION : utiliser $($remoteAddr) pour éviter l'erreur de variable
-            Add-Finding -Category "NetworkIndicators" -Title "Connection to Known Cheat IP" -Details "Process ID $($conn.OwningProcess) connected to $($remoteAddr):$($conn.RemotePort) (State: $($conn.State))." -Severity Critical
+            # CORRECTION : utiliser ${remoteAddr} pour éviter l'erreur de parsing
+            Add-Finding -Category "NetworkIndicators" -Title "Connection to Known Cheat IP" -Details "Process ID $($conn.OwningProcess) connected to ${remoteAddr}:$($conn.RemotePort) (State: $($conn.State))." -Severity Critical
         }
         if ($conn.LocalPort -notin @(80,443,3389,445,135,22,53,137,138,139,1900,5353) -and $conn.State -eq 'Listen') {
             $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
@@ -914,9 +914,9 @@ function Invoke-EventLogForensicsScan {
             if ($cmdLine -match '(-inject|-map|cheat|hack|loader|inject|bypass|bypasser|stealth|mapper|reflect|manualmap)') {
                 Add-Finding -Category "EventLogForensics" -Title "Suspicious Process Command Line" -Details "Process $procName (PID $($log.Properties[4].Value)) executed with: $cmdLine" -Severity Critical
             }
-            # CORRECTION : utiliser $($procName) et $($cmdLine) pour éviter l'erreur
+            # CORRECTION : utiliser ${procName} et ${cmdLine} pour éviter l'erreur de parsing
             if ($parentName -match 'winword|excel|powerpnt' -and $procName -match 'cmd|powershell|wscript') {
-                Add-Finding -Category "EventLogForensics" -Title "Office Application Spawned Shell" -Details "$parentName spawned $($procName): $($cmdLine)" -Severity Critical
+                Add-Finding -Category "EventLogForensics" -Title "Office Application Spawned Shell" -Details "$parentName spawned ${procName}: ${cmdLine}" -Severity Critical
             }
             if (($parentName -eq 'svchost.exe' -and $procName -eq 'cmd.exe') -or ($parentName -eq 'notepad.exe' -and $procName -eq 'powershell.exe')) {
                 Add-Finding -Category "EventLogForensics" -Title "Anomalous Parent-Child Process" -Details "$parentName spawned $procName (PID $($log.Properties[4].Value))" -Severity Critical
