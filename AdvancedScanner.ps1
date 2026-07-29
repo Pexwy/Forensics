@@ -31,7 +31,6 @@ using System.ComponentModel;
 
 public class NativeMethods
 {
-    // Process Memory Reading
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint dwSize, out IntPtr lpNumberOfBytesRead);
 
@@ -41,14 +40,12 @@ public class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr hObject);
 
-    // Virtual Memory Query
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
 
-    // Process snapshot & module enumeration
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 
@@ -64,7 +61,6 @@ public class NativeMethods
     [DllImport("psapi.dll", SetLastError = true)]
     public static extern uint GetModuleFileNameEx(IntPtr hProcess, IntPtr hModule, StringBuilder lpFilename, uint nSize);
 
-    // Process information
     [DllImport("ntdll.dll")]
     public static extern int NtQueryInformationProcess(IntPtr processHandle, int processInformationClass, ref PROCESS_BASIC_INFORMATION processInformation, uint processInformationLength, out uint returnLength);
 
@@ -80,11 +76,9 @@ public class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool QueryFullProcessImageName(IntPtr hProcess, uint dwFlags, StringBuilder lpExeName, ref uint lpdwSize);
 
-    // Process priority
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern int GetPriorityClass(IntPtr hProcess);
 
-    // Constants
     public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     public const uint PROCESS_VM_READ = 0x0010;
     public const uint TH32CS_SNAPMODULE = 0x00000008;
@@ -176,7 +170,6 @@ public enum MemoryProtection : uint
 
 Add-Type -TypeDefinition $pinvokeCode -ErrorAction SilentlyContinue
 
-# Helper function to get readable error messages
 function Get-LastWin32Error {
     $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
     if ($errorCode -ne 0) {
@@ -360,7 +353,6 @@ function Test-AdminRightsForProcess {
     param([int]$ProcessId)
     try {
         $proc = Get-Process -Id $ProcessId -ErrorAction Stop
-        # We can attempt to open with QueryInformation, if fails then we lack rights
         $hProcess = [NativeMethods]::OpenProcess([NativeMethods]::PROCESS_QUERY_INFORMATION, $false, $ProcessId)
         if ($hProcess -eq [IntPtr]::Zero) { return $false }
         [NativeMethods]::CloseHandle($hProcess)
@@ -377,9 +369,7 @@ function Invoke-ProcessInjectionScan {
     $processes = Get-WmiObject Win32_Process -ErrorAction SilentlyContinue
     $allProcs = @{}
     $processes | ForEach-Object { $allProcs[$_.ProcessId] = $_ }
-    # Get process list via Get-Process for easier module enumeration
     $psProcesses = Get-Process -ErrorAction SilentlyContinue
-    # Known cheat process names
     $knownCheatNames = @(
         "cheatengine*","extremeinjector*","processhacker*","xenos*","injector*","cheatloader*",
         "unknowncheats*","csghost*","darkcomet*","ezfrags*","lmaobox*","puddinpoop*","nixware*",
@@ -425,11 +415,10 @@ function Invoke-ProcessInjectionScan {
         } catch { continue }
     }
 
-    # Thread start address suspicion (simplified)
-    # We'll flag processes with threads that have start addresses not in any known module (hard to implement fully without kernel, skip or note)
+    # Thread injection check
     Add-Finding -Category "ProcessInjection" -Title "Thread Injection Check" -Details "Unable to fully scan thread start addresses without kernel access. Check for suspicious threads manually if necessary." -Severity Clean
 
-    # Hidden process detection (DKOM) via NtQuerySystemInformation - not easily done from PowerShell without custom C# code; we'll use a known WMI trick: list processes using WMI, then using Get-Process, then diff.
+    # Hidden process detection (DKOM)
     $wmiProcessIds = $processes | ForEach-Object { $_.ProcessId }
     $psProcessIds = $psProcesses | ForEach-Object { $_.Id }
     $hiddenIds = Compare-Object -ReferenceObject $wmiProcessIds -DifferenceObject $psProcessIds -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
@@ -531,8 +520,8 @@ function Invoke-MemoryForensicsScan {
     # PEB anti-debug flags
     $testProcs = Get-Process -Name "lsass","csrss","svchost","explorer" -ErrorAction SilentlyContinue | Select-Object -First 5
     foreach ($proc in $testProcs) {
-        $beingDebugged = Get-PEBBytes -ProcessId $proc.Id -Offset 2 -Length 1  # byte at offset 2 in PEB is BeingDebugged
-        $ntGlobalFlag = Get-PEBBytes -ProcessId $proc.Id -Offset 0xBC -Length 4  # NtGlobalFlag offset in 64-bit PEB
+        $beingDebugged = Get-PEBBytes -ProcessId $proc.Id -Offset 2 -Length 1
+        $ntGlobalFlag = Get-PEBBytes -ProcessId $proc.Id -Offset 0xBC -Length 4
         if ($beingDebugged -and $beingDebugged[0] -ne 0) {
             Add-Finding -Category "MemoryForensics" -Title "Process PEB BeingDebugged Set" -Details "Process $($proc.Name) (PID $($proc.Id)) has BeingDebugged flag set, indicating possible anti-debugging." -Severity Suspicious
         }
@@ -549,7 +538,7 @@ function Invoke-AMSIETWBypassScan {
     # AMSI Provider registry
     $amsiProviderPath = "HKLM:\SOFTWARE\Microsoft\AMSI\Providers"
     if (Test-Path $amsiProviderPath) {
-        $defaultProvider = "{2781761E-28E0-4109-99FE-B9D127C57AFE}"  # Windows Defender
+        $defaultProvider = "{2781761E-28E0-4109-99FE-B9D127C57AFE}"
         Get-ChildItem $amsiProviderPath | ForEach-Object {
             $guid = $_.PSChildName
             if ($guid -ne $defaultProvider) {
@@ -751,15 +740,14 @@ function Invoke-RegistryPersistenceScan {
         }
     }
 
-    # COM hijacking (simplified check for specific CLSID)
-    $comHijackCLSIDs = @("{00024500-0000-0000-C000-000000000046}") # Microsoft Office
+    # COM hijacking
+    $comHijackCLSIDs = @("{00024500-0000-0000-C000-000000000046}")
     foreach ($clsids in $comHijackCLSIDs) {
         $hkcuPath = "HKCU:\SOFTWARE\Classes\CLSID\$clsids"
         $hklmPath = "HKLM:\SOFTWARE\Classes\CLSID\$clsids"
         if (Test-Path $hkcuPath) {
             Add-Finding -Category "RegistryPersistence" -Title "COM Hijacking in HKCU" -Details "User-defined COM registration for CLSID $clsids found. Could be used for persistence." -Severity Suspicious
         }
-        # Additional check for InProcServer32
         if (Test-Path "$hkcuPath\InProcServer32") {
             $val = Get-ItemProperty -Path "$hkcuPath\InProcServer32" -Name "(default)" -ErrorAction SilentlyContinue
             if ($val) {
@@ -768,12 +756,11 @@ function Invoke-RegistryPersistenceScan {
         }
     }
 
-    # Scheduled tasks persistence
+    # Scheduled tasks
     $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue
     foreach ($task in $tasks) {
         if ($task.State -eq 'Ready' -or $task.State -eq 'Running') {
             $actions = $task.Actions
-            $triggers = $task.Triggers
             foreach ($action in $actions) {
                 if ($action.Execute -match '(\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\|\\Windows\\Temp\\)') {
                     Add-Finding -Category "RegistryPersistence" -Title "Suspicious Scheduled Task" -Details "Task '$($task.TaskName)' executes '$($action.Execute)' from user-writable path." -Severity Suspicious
@@ -831,13 +818,13 @@ function Invoke-FileSystemScan {
         }
     }
 
-    # ADS check in user profile root
+    # ADS check
     $userProfile = [Environment]::GetFolderPath('UserProfile')
     Get-Item "$userProfile\*" -Stream * -ErrorAction SilentlyContinue | Where-Object { $_.Stream -ne ':$DATA' } | ForEach-Object {
         Add-Finding -Category "FileSystem" -Title "Alternate Data Stream Detected" -Details "File $($_.FileName) has stream '$($_.Stream)'." -Severity Suspicious
     }
 
-    # LNK files analysis
+    # LNK files
     $recentPath = "$env:APPDATA\Microsoft\Windows\Recent"
     if (Test-Path $recentPath) {
         Get-ChildItem $recentPath -Filter *.lnk -ErrorAction SilentlyContinue | ForEach-Object {
@@ -849,7 +836,7 @@ function Invoke-FileSystemScan {
         }
     }
 
-    # Browser extensions (Chrome / Edge) simplified
+    # Browser extensions
     $extPaths = @(
         "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions",
         "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Extensions"
@@ -878,7 +865,8 @@ function Invoke-NetworkIndicatorsScan {
     foreach ($conn in $tcpConnections) {
         $remoteAddr = $conn.RemoteAddress
         if ($remoteAddr -in $script:KnownCheatIPs) {
-            Add-Finding -Category "NetworkIndicators" -Title "Connection to Known Cheat IP" -Details "Process ID $($conn.OwningProcess) connected to $remoteAddr:$($conn.RemotePort) (State: $($conn.State))." -Severity Critical
+            # CORRECTION : utiliser $($remoteAddr) pour éviter l'erreur de variable
+            Add-Finding -Category "NetworkIndicators" -Title "Connection to Known Cheat IP" -Details "Process ID $($conn.OwningProcess) connected to $($remoteAddr):$($conn.RemotePort) (State: $($conn.State))." -Severity Critical
         }
         if ($conn.LocalPort -notin @(80,443,3389,445,135,22,53,137,138,139,1900,5353) -and $conn.State -eq 'Listen') {
             $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
@@ -888,17 +876,16 @@ function Invoke-NetworkIndicatorsScan {
         }
     }
 
-    # Firewall rules check
+    # Firewall rules
     $firewallRules = netsh advfirewall firewall show rule name=all verbose 2>$null
     if ($firewallRules) {
         $rulesText = $firewallRules -join "`n"
-        # Simple check for user-writable paths
         if ($rulesText -match '(C:\\Users\\.+\\AppData\\|C:\\Windows\\Temp\\)') {
             Add-Finding -Category "NetworkIndicators" -Title "Firewall Rule with User Path" -Details "A firewall rule allows a process in a user-writable directory." -Severity Suspicious
         }
     }
 
-    # Proxy/VPN detection
+    # Proxy/VPN
     $proxySettings = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -ErrorAction SilentlyContinue
     if ($proxySettings.ProxyEnable -eq 1 -and $proxySettings.ProxyServer) {
         Add-Finding -Category "NetworkIndicators" -Title "System Proxy Enabled" -Details "Proxy server set to $($proxySettings.ProxyServer)." -Severity Suspicious
@@ -927,11 +914,10 @@ function Invoke-EventLogForensicsScan {
             if ($cmdLine -match '(-inject|-map|cheat|hack|loader|inject|bypass|bypasser|stealth|mapper|reflect|manualmap)') {
                 Add-Finding -Category "EventLogForensics" -Title "Suspicious Process Command Line" -Details "Process $procName (PID $($log.Properties[4].Value)) executed with: $cmdLine" -Severity Critical
             }
-            # Office spawning suspicious child
+            # CORRECTION : utiliser $($procName) et $($cmdLine) pour éviter l'erreur
             if ($parentName -match 'winword|excel|powerpnt' -and $procName -match 'cmd|powershell|wscript') {
-                Add-Finding -Category "EventLogForensics" -Title "Office Application Spawned Shell" -Details "$parentName spawned $procName: $cmdLine" -Severity Critical
+                Add-Finding -Category "EventLogForensics" -Title "Office Application Spawned Shell" -Details "$parentName spawned $($procName): $($cmdLine)" -Severity Critical
             }
-            # Anomalous child
             if (($parentName -eq 'svchost.exe' -and $procName -eq 'cmd.exe') -or ($parentName -eq 'notepad.exe' -and $procName -eq 'powershell.exe')) {
                 Add-Finding -Category "EventLogForensics" -Title "Anomalous Parent-Child Process" -Details "$parentName spawned $procName (PID $($log.Properties[4].Value))" -Severity Critical
             }
@@ -976,7 +962,7 @@ function Invoke-EventLogForensicsScan {
         }
     }
 
-    # Defender Operational detections
+    # Defender Operational
     $defenderLogs = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; ID=1116,1117,1118,1119,5001; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 50 -ErrorAction SilentlyContinue
     if ($defenderLogs) {
         foreach ($log in $defenderLogs) {
@@ -1003,7 +989,6 @@ function New-HtmlReport {
     $totalWarnings = $script:TotalWarnings
     $totalCritical = $script:TotalCritical
 
-    # Build findings HTML for each tab
     $tabsContent = ""
     foreach ($category in $script:DetectionResults.Keys) {
         $findings = $script:DetectionResults[$category]
@@ -1011,16 +996,6 @@ function New-HtmlReport {
         $warnCount = ($findings | Where-Object Severity -eq 'Suspicious').Count
         $critCount = ($findings | Where-Object Severity -eq 'Critical').Count
         $tabId = $category.ToLower()
-        $tabTitle = switch ($category) {
-            "ProcessInjection" { "Process & Injection" }
-            "MemoryForensics" { "Memory Forensics" }
-            "AMSIETWBypass" { "AMSI & ETW Bypass" }
-            "DriverKernel" { "Driver & Kernel" }
-            "RegistryPersistence" { "Registry Persistence" }
-            "FileSystem" { "File System" }
-            "NetworkIndicators" { "Network & C2" }
-            "EventLogForensics" { "Event Log Forensics" }
-        }
         $severityColor = if ($critCount -gt 0) { "red" } elseif ($warnCount -gt 0) { "yellow" } else { "green" }
         $overall = if ($critCount -gt 0) { "Critical" } elseif ($warnCount -gt 0) { "Suspicious" } else { "Clean" }
         $findingsHtml = ""
@@ -1173,7 +1148,6 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById(targetId).classList.add('active');
         });
     });
-    // Store report for export
     reportData = {
         computerName: "$computer",
         scanTime: "$date",
@@ -1231,7 +1205,6 @@ function Main {
     $script:TotalTasks = 8
     $script:Progress = 0
 
-    # Execute detection modules
     Invoke-ProcessInjectionScan
     $script:Progress += 12.5
     Invoke-MemoryForensicsScan
