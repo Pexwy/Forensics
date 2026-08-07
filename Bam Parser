@@ -1,0 +1,640 @@
+#Requires -RunAsAdministrator
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    BAM (Background Activity Moderator) Forensic Parser - v2.1
+.DESCRIPTION
+    Extracts program execution evidence from BAM registry keys with
+    volume path resolution, Authenticode checks, filtering, and export.
+.NOTES
+    DFIR / execution-timeline analysis utility
+    Compatible: Windows 10 1709+ / Windows 11
+
+    CHANGELOG (v2.0 -> v2.1)
+    - Removed dead/broken volume-map code path (Get-VolumeMap + Win32.Kernel32
+      type were defined but never called, and the Set-Alias used to reference
+      the type didn't actually work - Set-Alias aliases commands, not types).
+      There is now a single, actually-used volume-mapping routine.
+    - Get-TimezoneInfo no longer assumes ActiveTimeBias exists; falls back to
+      0 and warns instead of letting a later AddMinutes($null) call throw.
+    - Export-Results now excludes the internal SortTime sort key so CSV/JSON
+      output matches what's shown in the grid/pipeline (previously leaked
+      through as an extra column).
+    - Registry values are now read once per SID key via a single
+      Get-ItemProperty call instead of one call per value - much faster on
+      accounts with a long BAM history.
+    - $ErrorActionPreference left at Continue by default; the handful of
+      operations that are *expected* to fail sometimes (hashing a deleted
+      file, translating an orphaned SID, etc.) use explicit try/catch
+      instead of relying on a blanket SilentlyContinue that could hide a
+      real problem elsewhere in the script.
+    - Minor: progress output while scanning, safer AppX/package detection.
+.EXAMPLE
+    .\BAM-Parser.ps1
+.EXAMPLE
+    .\BAM-Parser.ps1 -ExportPath C:\Evidence -Format CSV,JSON -DaysBack 7
+.EXAMPLE
+    .\BAM-Parser.ps1 -Filter "*.exe" -UnsignedOnly -NoGrid
+#>
+
+[CmdletBinding()]
+param(
+    [string]$ExportPath,
+    [ValidateSet('CSV', 'JSON', 'HTML', 'All')]
+    [string[]]$Format = @('CSV'),
+    [int]$DaysBack = 0,
+    [string]$Filter = '*',
+    [switch]$UnsignedOnly,
+    [switch]$NoGrid,
+    [switch]$IncludeSystemAccounts,
+    [switch]$Quiet
+)
+
+$ErrorActionPreference = 'Continue'
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+#region Helpers
+
+function Write-Banner {
+    if ($Quiet) { return }
+    $banner = @'
+   ██████╗  █████╗ ███╗   ███╗    ██████╗  █████╗ ██████╗ ███████╗███████╗██████╗
+   ██╔══██╗██╔══██╗████╗ ████║    ██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗
+   ██████╔╝███████║██╔████╔██║    ██████╔╝███████║██████╔╝███████╗█████╗  ██████╔╝
+   ██╔══██╗██╔══██║██║╚██╔╝██║    ██╔═══╝ ██╔══██║██╔══██╗╚════██║██╔══╝  ██╔══██╗
+   ██████╔╝██║  ██║██║ ╚═╝ ██║    ██║     ██║  ██║██║  ██║███████║███████╗██║  ██║
+   ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝    ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+'@
+    Write-Host $banner -ForegroundColor Red
+    Write-Host "   BAM Forensic Parser v2.1  |  DFIR Execution Timeline" -ForegroundColor Cyan
+    Write-Host "   $($PSVersionTable.PSVersion)  |  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+function Test-Administrator {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$id
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Single P/Invoke definition, loaded once, actually used below.
+function Register-DosDeviceType {
+    if ('DosDevice' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class DosDevice {
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    public static extern uint QueryDosDevice(string lpDeviceName, StringBuilder lpTargetPath, uint ucchMax);
+    public static string GetDevice(string drive) {
+        var sb = new StringBuilder(512);
+        uint r = QueryDosDevice(drive, sb, 512);
+        return r != 0 ? sb.ToString() : null;
+    }
+}
+'@ -ErrorAction Stop
+}
+
+function Get-VolumeMap {
+    <#
+    .SYNOPSIS
+        Maps \Device\HarddiskVolumeN style device paths to drive letters.
+    #>
+    $map = @{}
+
+    # Primary source: WMI/CIM, richest info when available.
+    try {
+        Get-CimInstance -ClassName Win32_Volume -ErrorAction Stop |
+            Where-Object { $_.DriveLetter -and $_.DeviceID } |
+            ForEach-Object {
+                $map[$_.DeviceID.TrimEnd('\')] = $_.DriveLetter.TrimEnd('\')
+            }
+    } catch {
+        if (-not $Quiet) { Write-Host "[!] Win32_Volume lookup failed ($($_.Exception.Message)), falling back to QueryDosDevice" -ForegroundColor Yellow }
+    }
+
+    # Fallback / supplement: QueryDosDevice per drive letter, covers any
+    # drives CIM missed and is more reliable in locked-down environments.
+    try {
+        Register-DosDeviceType
+        foreach ($letter in [char[]](65..90)) {
+            $drive = "$letter`:"
+            $dev = [DosDevice]::GetDevice($drive)
+            if ($dev -and -not $map.ContainsKey($dev)) {
+                $map[$dev] = $drive
+            }
+        }
+    } catch {
+        if (-not $Quiet) { Write-Host "[!] QueryDosDevice fallback failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
+
+    return $map
+}
+
+function Resolve-DevicePath {
+    param(
+        [string]$RawPath,
+        [hashtable]$VolumeMap
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RawPath)) {
+        return [PSCustomObject]@{
+            DevicePath   = $RawPath
+            ResolvedPath = $null
+            DriveLetter  = $null
+            FileName     = $RawPath
+            IsDevicePath = $false
+        }
+    }
+
+    # Typical BAM entry: \Device\HarddiskVolume3\Windows\System32\cmd.exe
+    if ($RawPath -match '^\\Device\\HarddiskVolume(\d+)(\\.*)$') {
+        $volNum  = $Matches[1]
+        $relPath = $Matches[2]
+        $device  = "\Device\HarddiskVolume$volNum"
+        $drive   = $null
+
+        if ($VolumeMap.ContainsKey($device)) {
+            $drive = $VolumeMap[$device]
+        } else {
+            foreach ($key in $VolumeMap.Keys) {
+                if ($key -like "*HarddiskVolume$volNum*") {
+                    $drive = $VolumeMap[$key]
+                    break
+                }
+            }
+        }
+
+        $resolved = if ($drive) { Join-Path $drive $relPath.TrimStart('\') } else { $null }
+        $fileName = Split-Path -Leaf $relPath
+
+        return [PSCustomObject]@{
+            DevicePath   = $RawPath
+            ResolvedPath = $resolved
+            DriveLetter  = $drive
+            FileName     = $fileName
+            IsDevicePath = $true
+        }
+    }
+
+    # Non-device paths (rare / packaged-app style)
+    return [PSCustomObject]@{
+        DevicePath   = $RawPath
+        ResolvedPath = $null
+        DriveLetter  = $null
+        FileName     = Split-Path -Leaf $RawPath
+        IsDevicePath = $false
+    }
+}
+
+function Get-FileSignatureInfo {
+    param([string]$FilePath)
+
+    $result = [PSCustomObject]@{
+        Status      = 'N/A'
+        Signer      = ''
+        IsOSBinary  = $false
+        Exists      = $false
+        SHA256      = ''
+        FileVersion = ''
+        ProductName = ''
+        Company     = ''
+        FileSize    = $null
+        Created     = $null
+        Modified    = $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($FilePath)) {
+        $result.Status = 'No Path'
+        return $result
+    }
+
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        $result.Status = 'File Not Found'
+        return $result
+    }
+
+    $result.Exists = $true
+
+    try {
+        $item = Get-Item -LiteralPath $FilePath -Force -ErrorAction Stop
+        $result.FileSize = $item.Length
+        $result.Created  = $item.CreationTimeUtc
+        $result.Modified = $item.LastWriteTimeUtc
+
+        $vi = $item.VersionInfo
+        $result.FileVersion = $vi.FileVersion
+        $result.ProductName = $vi.ProductName
+        $result.Company     = $vi.CompanyName
+    } catch {
+        # Metadata is best-effort; a locked or ACL-restricted file shouldn't
+        # abort the whole entry.
+    }
+
+    try {
+        $auth = Get-AuthenticodeSignature -FilePath $FilePath -ErrorAction Stop
+        switch ($auth.Status) {
+            'Valid'        { $result.Status = 'Valid' }
+            'NotSigned'    { $result.Status = 'NotSigned' }
+            'HashMismatch' { $result.Status = 'HashMismatch' }
+            'NotTrusted'   { $result.Status = 'NotTrusted' }
+            'UnknownError' { $result.Status = 'UnknownError' }
+            default        { $result.Status = [string]$auth.Status }
+        }
+        if ($auth.SignerCertificate) {
+            $result.Signer = $auth.SignerCertificate.Subject
+        }
+        if ($null -ne $auth.IsOSBinary) {
+            $result.IsOSBinary = [bool]$auth.IsOSBinary
+        }
+    } catch {
+        $result.Status = 'CheckFailed'
+    }
+
+    try {
+        $hash = Get-FileHash -LiteralPath $FilePath -Algorithm SHA256 -ErrorAction Stop
+        $result.SHA256 = $hash.Hash
+    } catch {
+        # File may have been deleted between the Test-Path check and here,
+        # or be locked/inaccessible - leave SHA256 blank rather than failing.
+    }
+
+    return $result
+}
+
+function Convert-FileTime {
+    param([byte[]]$Bytes)
+
+    if ($null -eq $Bytes -or $Bytes.Length -lt 8) { return $null }
+
+    try {
+        # BAM stores a FILETIME as little-endian Int64 at offset 0 of the value.
+        $fileTime = [BitConverter]::ToInt64($Bytes, 0)
+        if ($fileTime -le 0) { return $null }
+        return [DateTime]::FromFileTimeUtc($fileTime)
+    } catch {
+        return $null
+    }
+}
+
+function Get-TimezoneInfo {
+    $default = [PSCustomObject]@{
+        Name          = $(try { (Get-TimeZone -ErrorAction Stop).Id } catch { 'Unknown' })
+        ActiveBiasMin = 0
+        DaylightBias  = 0
+    }
+
+    try {
+        $tz = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' -ErrorAction Stop
+
+        if ($null -eq $tz.ActiveTimeBias) {
+            if (-not $Quiet) { Write-Host "[!] ActiveTimeBias not present in registry, assuming 0 bias" -ForegroundColor Yellow }
+            return $default
+        }
+
+        $biasMin = $tz.ActiveTimeBias
+        if ($biasMin -gt 0x7FFFFFFF) {
+            $biasMin = $biasMin - 0x100000000
+        }
+        return [PSCustomObject]@{
+            Name          = $tz.TimeZoneKeyName
+            ActiveBiasMin = $biasMin
+            DaylightBias  = $tz.DaylightBias
+        }
+    } catch {
+        if (-not $Quiet) { Write-Host "[!] Could not read timezone info ($($_.Exception.Message)), assuming 0 bias" -ForegroundColor Yellow }
+        return $default
+    }
+}
+
+function Resolve-Sid {
+    param([string]$Sid)
+
+    $known = @{
+        'S-1-5-18' = 'NT AUTHORITY\SYSTEM'
+        'S-1-5-19' = 'NT AUTHORITY\LOCAL SERVICE'
+        'S-1-5-20' = 'NT AUTHORITY\NETWORK SERVICE'
+    }
+    if ($known.ContainsKey($Sid)) { return $known[$Sid] }
+
+    try {
+        $obj = New-Object System.Security.Principal.SecurityIdentifier($Sid)
+        return $obj.Translate([System.Security.Principal.NTAccount]).Value
+    } catch {
+        # Orphaned SID (deleted profile) - fall back to the raw SID string.
+        return $Sid
+    }
+}
+
+function Export-Results {
+    param(
+        [object[]]$Data,
+        [string]$Path,
+        [string[]]$Formats
+    )
+
+    if (-not $Path) { return }
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+
+    # Drop the internal sort key so exports match what the console/grid show.
+    $exportData = $Data | Select-Object * -ExcludeProperty SortTime
+
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $base  = Join-Path $Path "BAM_Report_$stamp"
+
+    $doAll = $Formats -contains 'All'
+
+    if ($doAll -or $Formats -contains 'CSV') {
+        $csv = "$base.csv"
+        $exportData | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
+        Write-Host "[+] CSV  -> $csv" -ForegroundColor Green
+    }
+
+    if ($doAll -or $Formats -contains 'JSON') {
+        $json = "$base.json"
+        $exportData | ConvertTo-Json -Depth 6 | Set-Content -Path $json -Encoding UTF8
+        Write-Host "[+] JSON -> $json" -ForegroundColor Green
+    }
+
+    if ($doAll -or $Formats -contains 'HTML') {
+        $html = "$base.html"
+        $css = @'
+<style>
+  body { font-family: Consolas, monospace; background:#0d1117; color:#c9d1d9; margin:20px; }
+  h1 { color:#58a6ff; }
+  .meta { color:#8b949e; margin-bottom:16px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th { background:#161b22; color:#58a6ff; padding:8px; text-align:left; position:sticky; top:0; }
+  td { border-bottom:1px solid #21262d; padding:6px 8px; vertical-align:top; }
+  tr:hover { background:#161b22; }
+  .valid { color:#3fb950; }
+  .notsigned { color:#f85149; }
+  .hashmismatch { color:#f85149; font-weight:bold; }
+  .nottrusted { color:#d29922; }
+  .missing { color:#8b949e; }
+</style>
+'@
+        $rows = foreach ($r in $exportData) {
+            $cls = switch -Regex ($r.Signature) {
+                'Valid'        { 'valid' }
+                'NotSigned'    { 'notsigned' }
+                'HashMismatch' { 'hashmismatch' }
+                'NotTrusted'   { 'nottrusted' }
+                'Not Found'    { 'missing' }
+                default        { '' }
+            }
+            @"
+<tr>
+  <td>$($r.LastExecutionUTC)</td>
+  <td>$($r.LastExecutionLocal)</td>
+  <td>$([System.Net.WebUtility]::HtmlEncode($r.Application))</td>
+  <td>$([System.Net.WebUtility]::HtmlEncode($r.Path))</td>
+  <td class="$cls">$($r.Signature)</td>
+  <td>$([System.Net.WebUtility]::HtmlEncode($r.Signer))</td>
+  <td>$([System.Net.WebUtility]::HtmlEncode($r.User))</td>
+  <td>$($r.SHA256)</td>
+</tr>
+"@
+        }
+
+        $doc = @"
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>BAM Report $stamp</title>$css</head>
+<body>
+<h1>BAM Execution Report</h1>
+<div class="meta">
+  Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') |
+  Entries: $($exportData.Count) |
+  Host: $env:COMPUTERNAME
+</div>
+<table>
+<thead>
+<tr>
+  <th>UTC</th><th>Local</th><th>Application</th><th>Path</th>
+  <th>Signature</th><th>Signer</th><th>User</th><th>SHA256</th>
+</tr>
+</thead>
+<tbody>
+$($rows -join "`n")
+</tbody>
+</table>
+</body></html>
+"@
+        $doc | Set-Content -Path $html -Encoding UTF8
+        Write-Host "[+] HTML -> $html" -ForegroundColor Green
+    }
+}
+
+#endregion Helpers
+
+#region Main
+
+Write-Banner
+
+if (-not (Test-Administrator)) {
+    Write-Warning "Administrator privileges required. Right-click PowerShell -> Run as administrator."
+    Start-Sleep -Seconds 8
+    exit 1
+}
+
+if (-not (Get-PSDrive -Name HKLM -PSProvider Registry -ErrorAction SilentlyContinue)) {
+    try {
+        New-PSDrive -Name HKLM -PSProvider Registry -Root HKEY_LOCAL_MACHINE -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Error "Failed to mount HKLM: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+$bamRoots = @(
+    'HKLM:\SYSTEM\CurrentControlSet\Services\bam\UserSettings',
+    'HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings'
+)
+
+$availableRoots = $bamRoots | Where-Object { Test-Path $_ }
+if (-not $availableRoots) {
+    Write-Warning "BAM keys not found. Unsupported Windows version or BAM disabled."
+    exit 1
+}
+
+$tz     = Get-TimezoneInfo
+$volMap = Get-VolumeMap
+
+if (-not $Quiet) {
+    Write-Host "[*] Timezone : $($tz.Name) (bias $($tz.ActiveBiasMin) min)" -ForegroundColor DarkCyan
+    Write-Host "[*] Volumes  : $($volMap.Count) mapped" -ForegroundColor DarkCyan
+    Write-Host "[*] Scanning BAM keys..." -ForegroundColor DarkCyan
+    Write-Host ""
+}
+
+$cutoff = if ($DaysBack -gt 0) { [DateTime]::UtcNow.AddDays(-$DaysBack) } else { [DateTime]::MinValue }
+$results = [System.Collections.Generic.List[object]]::new()
+$sidsSeen = @{}
+$metaValues = @('Version', 'SequenceNumber', 'SequenceNumberOnly', 'Flags')
+
+foreach ($root in $availableRoots) {
+    $sidKeys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+    $sidIndex = 0
+    foreach ($sidKey in $sidKeys) {
+        $sidIndex++
+        $sid = $sidKey.PSChildName
+        if (-not $IncludeSystemAccounts -and $sid -match '^S-1-5-(18|19|20)$') { continue }
+
+        $userName = Resolve-Sid -Sid $sid
+        if (-not $sidsSeen.ContainsKey($sid)) {
+            $sidsSeen[$sid] = $userName
+            if (-not $Quiet) {
+                Write-Host "    SID " -ForegroundColor DarkGray -NoNewline
+                Write-Host "$sid" -ForegroundColor Blue -NoNewline
+                Write-Host " -> " -ForegroundColor DarkGray -NoNewline
+                Write-Host "$userName" -ForegroundColor White
+            }
+        }
+
+        if (-not $Quiet) {
+            Write-Progress -Activity "Scanning BAM keys" -Status "$userName ($sid)" `
+                -PercentComplete ([int](($sidIndex / [Math]::Max($sidKeys.Count,1)) * 100))
+        }
+
+        # One round trip for all values under this key instead of one per value.
+        $allProps = $null
+        try {
+            $allProps = Get-ItemProperty -LiteralPath $sidKey.PSPath -ErrorAction Stop
+        } catch {
+            continue
+        }
+
+        foreach ($propName in $sidKey.Property) {
+            if ($propName -in $metaValues) { continue }
+
+            $raw = $allProps.$propName
+            if ($raw -isnot [byte[]] -or $raw.Length -lt 8) { continue }
+
+            $utcTime = Convert-FileTime -Bytes $raw
+            if (-not $utcTime) { continue }
+            if ($utcTime -lt $cutoff) { continue }
+
+            $localTime = $utcTime.ToLocalTime()
+            $userTime  = $utcTime.AddMinutes(-$tz.ActiveBiasMin)
+
+            $resolved = Resolve-DevicePath -RawPath $propName -VolumeMap $volMap
+
+            $matchTarget = if ($resolved.ResolvedPath) { $resolved.ResolvedPath } else { $resolved.FileName }
+            if ($matchTarget -notlike $Filter -and $resolved.FileName -notlike $Filter) { continue }
+
+            $sigInfo = Get-FileSignatureInfo -FilePath $resolved.ResolvedPath
+
+            if ($UnsignedOnly -and $sigInfo.Status -eq 'Valid') { continue }
+
+            $appType = switch -Regex ($resolved.FileName) {
+                '\.exe$'               { 'Executable' }
+                '\.dll$'               { 'Library' }
+                '\.sys$'               { 'Driver' }
+                '\.com$'               { 'COM' }
+                '\.bat$|\.cmd$|\.ps1$' { 'Script' }
+                '^[A-Za-z0-9]{13}$'    { 'AppX/Store' }  # rough heuristic
+                default                { 'Other' }
+            }
+
+            $flags = [System.Collections.Generic.List[string]]::new()
+            if ($sigInfo.Status -in @('NotSigned', 'HashMismatch', 'NotTrusted')) {
+                $flags.Add($sigInfo.Status)
+            }
+            if (-not $sigInfo.Exists -and $resolved.IsDevicePath) { $flags.Add('Deleted/Missing') }
+            if ($resolved.ResolvedPath -match '\\(Temp|AppData\\Local\\Temp|Downloads)\\') {
+                $flags.Add('Temp/Downloads')
+            }
+            if ($resolved.ResolvedPath -match '\\Users\\[^\\]+\\AppData\\(Local|Roaming)\\') {
+                $flags.Add('UserAppData')
+            }
+            if ($resolved.FileName -match '^(cmd|powershell|pwsh|wscript|cscript|mshta|regsvr32|rundll32|certutil|bitsadmin|curl|wget)\.exe$') {
+                $flags.Add('LOLBin')
+            }
+
+            $results.Add([PSCustomObject]@{
+                LastExecutionUTC   = $utcTime.ToString('yyyy-MM-dd HH:mm:ss')
+                LastExecutionLocal = $localTime.ToString('yyyy-MM-dd HH:mm:ss')
+                LastExecutionUser  = $userTime.ToString('yyyy-MM-dd HH:mm:ss')
+                SortTime           = $utcTime
+                Application        = $resolved.FileName
+                Path               = $resolved.ResolvedPath
+                DevicePath         = $resolved.DevicePath
+                Type               = $appType
+                Signature          = $sigInfo.Status
+                Signer             = $sigInfo.Signer
+                IsOSBinary         = $sigInfo.IsOSBinary
+                SHA256             = $sigInfo.SHA256
+                FileVersion        = $sigInfo.FileVersion
+                Company            = $sigInfo.Company
+                ProductName        = $sigInfo.ProductName
+                FileSize           = $sigInfo.FileSize
+                FileCreatedUTC     = if ($sigInfo.Created)  { $sigInfo.Created.ToString('yyyy-MM-dd HH:mm:ss') }  else { '' }
+                FileModifiedUTC    = if ($sigInfo.Modified) { $sigInfo.Modified.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+                Exists             = $sigInfo.Exists
+                Flags              = ($flags -join ', ')
+                User               = $userName
+                SID                = $sid
+                BamKey             = $root
+            })
+        }
+    }
+}
+if (-not $Quiet) { Write-Progress -Activity "Scanning BAM keys" -Completed }
+
+$sorted = $results | Sort-Object SortTime -Descending
+
+if (-not $Quiet) {
+    Write-Host ""
+    Write-Host "[*] Total entries : $($sorted.Count)" -ForegroundColor Cyan
+    $unsigned = @($sorted | Where-Object { $_.Signature -eq 'NotSigned' }).Count
+    $missing  = @($sorted | Where-Object { $_.Exists -eq $false }).Count
+    $lolbins  = @($sorted | Where-Object { $_.Flags -match 'LOLBin' }).Count
+    Write-Host "    Unsigned      : $unsigned" -ForegroundColor $(if ($unsigned) { 'Yellow' } else { 'DarkGray' })
+    Write-Host "    Missing files : $missing"  -ForegroundColor $(if ($missing)  { 'Yellow' } else { 'DarkGray' })
+    Write-Host "    LOLBins       : $lolbins"  -ForegroundColor $(if ($lolbins)  { 'Yellow' } else { 'DarkGray' })
+    Write-Host ""
+}
+
+$viewCols = @(
+    'LastExecutionUTC',
+    'LastExecutionLocal',
+    'Application',
+    'Path',
+    'Signature',
+    'Flags',
+    'User',
+    'Type',
+    'Company',
+    'SHA256'
+)
+
+if (-not $NoGrid) {
+    if ($sorted.Count -eq 0) {
+        if (-not $Quiet) { Write-Host "[i] No entries matched the current filters - skipping GridView." -ForegroundColor DarkGray }
+    } else {
+        $title = "BAM Entries: $($sorted.Count) | TZ: $($tz.Name) | Bias: $($tz.ActiveBiasMin)m | $env:COMPUTERNAME"
+        $selected = $sorted | Select-Object $viewCols | Out-GridView -Title $title -PassThru
+        if ($selected) {
+            Write-Host "[*] $($selected.Count) row(s) selected in GridView" -ForegroundColor DarkCyan
+        }
+    }
+}
+
+if ($ExportPath) {
+    Export-Results -Data $sorted -Path $ExportPath -Formats $Format
+} elseif (-not $NoGrid -and -not $Quiet) {
+    Write-Host "[i] Tip: re-run with -ExportPath C:\Evidence -Format All" -ForegroundColor DarkGray
+}
+
+$sw.Stop()
+if (-not $Quiet) {
+    Write-Host ""
+    Write-Host ("Elapsed: {0:N2}s" -f $sw.Elapsed.TotalSeconds) -ForegroundColor Yellow
+}
+
+$sorted | Select-Object * -ExcludeProperty SortTime
+
+#endregion Main
