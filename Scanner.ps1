@@ -13,6 +13,7 @@ function Show-Menu {
     Write-Host "  [5] Mod Analyzer" -ForegroundColor White
     Write-Host "  [6] Services Manager" -ForegroundColor White
     Write-Host "  [7] Faker Detector" -ForegroundColor White
+    Write-Host "  [8] Bam Parser" -ForegroundColor White
     Write-Host ""
     Write-Host "  [0] Exit" -ForegroundColor DarkGray
     Write-Host ""
@@ -32,7 +33,7 @@ while ($true) {
             Write-Host "[+] Launching Services..." -ForegroundColor Green
             Write-Host ""
 
-            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Services.ps1')
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Services.ps1' | iex"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
@@ -44,7 +45,7 @@ while ($true) {
             Write-Host "[+] Launching DoomsDay Detector..." -ForegroundColor Green
             Write-Host ""
 
-            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/DoomsDayDetector.ps1')
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/DoomsDayDetector.ps1' | iex"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
@@ -56,56 +57,68 @@ while ($true) {
             Write-Host "[+] Launching Tools Collector [MINECRAFT]..." -ForegroundColor Green
             Write-Host ""
 
-            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Tools%20Collector.ps1')
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Tools%20Collector.ps1' | iex"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
         }
-        
 
         "4" {
             Clear-Host
             Write-Host ""
-            Write-Host "[+] Launching Alt Detecor..." -ForegroundColor Green
+            Write-Host "[+] Launching Alt Detector..." -ForegroundColor Green
             Write-Host ""
 
-            Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Alt-Detector.ps1')
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Alt-Detector.ps1' | iex"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
         }
-        
-                "5" {
+
+        "5" {
             Clear-Host
             Write-Host ""
             Write-Host "[+] Launching Mod Analyzer..." -ForegroundColor Green
             Write-Host ""
 
-            powershell -Command "Set-ExecutionPolicy Bypass -Scope Process; Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1')"
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1' | iex"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
         }
-        
-               "6" {
+
+        "6" {
             Clear-Host
             Write-Host ""
             Write-Host "[+] Launching Services Manager..." -ForegroundColor Green
             Write-Host ""
 
-            powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (iwr 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Services%20Manager' -UseBasicParsing)"
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Services%20Manager' | iex"
 
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
         }
-        
-            "7" {
+
+        "7" {
             Clear-Host
             Write-Host ""
             Write-Host "[+] Launching Faker Detector..." -ForegroundColor Green
             Write-Host ""
 
-            irm "https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Faker%20Detector" | iex
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/Faker%20Detector' | iex"
+
+            Write-Host ""
+            Read-Host "Press ENTER to return to the menu"
+        }
+
+        "8" {
+            Clear-Host
+            Write-Host ""
+            Write-Host "[+] Launching Bam Parser..." -ForegroundColor Green
+            Write-Host ""
+
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Pexwy/Forensics/refs/heads/main/BAM.ps1' | iex"
+
             Write-Host ""
             Read-Host "Press ENTER to return to the menu"
         }
