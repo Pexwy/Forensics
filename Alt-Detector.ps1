@@ -24,16 +24,16 @@ if (-not (Test-Path $startPath)) {
 #  Theme
 # ============================================================
 
-$colorBg      = [System.Drawing.Color]::FromArgb(30, 30, 30)    # #1e1e1e
-$colorPanel   = [System.Drawing.Color]::FromArgb(42, 42, 42)    # #2a2a2a
-$colorTrack   = [System.Drawing.Color]::FromArgb(38, 38, 38)    # #262626
-$colorBorder  = [System.Drawing.Color]::FromArgb(51, 51, 51)    # #333
-$colorPink    = [System.Drawing.Color]::FromArgb(255, 102, 255) # #ff66ff
-$colorPinkLt  = [System.Drawing.Color]::FromArgb(255, 153, 255) # #ff99ff
-$colorGreen   = [System.Drawing.Color]::FromArgb(102, 255, 153) # #66ff99
-$colorBlue    = [System.Drawing.Color]::FromArgb(159, 211, 255) # #9fd3ff
-$colorSubtext = [System.Drawing.Color]::FromArgb(153, 153, 153) # #999
-$colorText    = [System.Drawing.Color]::FromArgb(221, 221, 221) # #ddd
+$colorBg      = [System.Drawing.Color]::FromArgb(18, 18, 18)
+$colorPanel   = [System.Drawing.Color]::FromArgb(28, 28, 28)
+$colorTrack   = [System.Drawing.Color]::FromArgb(35, 35, 35)
+$colorBorder  = [System.Drawing.Color]::FromArgb(55, 55, 55)
+$colorAccent  = [System.Drawing.Color]::FromArgb(220, 220, 220)
+$colorAccent2 = [System.Drawing.Color]::FromArgb(185, 185, 185)
+
+
+$colorSubtext = [System.Drawing.Color]::FromArgb(145, 145, 145)
+$colorText    = [System.Drawing.Color]::FromArgb(232, 232, 232)
 
 function New-RoundedRegion {
     param([int]$Width, [int]$Height, [int]$Radius)
@@ -62,8 +62,8 @@ function Enable-Drag {
 #  Window shell
 # ============================================================
 
-$formWidth  = 480
-$formHeight = 220
+$formWidth  = 520
+$formHeight = 230
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Alt Detector"
@@ -93,7 +93,7 @@ $accent.Location = New-Object System.Drawing.Point(0, 0)
 $accent.Add_Paint({
     param($s, $e)
     $rect = New-Object System.Drawing.Rectangle(0, 0, $accent.Width, $accent.Height)
-    $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $colorPink, $colorGreen, 0.0)
+    $brush = New-Object System.Drawing.SolidBrush($colorAccent)
     $e.Graphics.FillRectangle($brush, $rect)
     $brush.Dispose()
 })
@@ -110,7 +110,7 @@ $closeBtn.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $closeBtn.Location = New-Object System.Drawing.Point(($form.Width - 36), 12)
 $closeBtn.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
 $closeBtn.Cursor = [System.Windows.Forms.Cursors]::Hand
-$closeBtn.Add_MouseEnter({ $closeBtn.ForeColor = $colorPink })
+$closeBtn.Add_MouseEnter({ $closeBtn.ForeColor = $colorText })
 $closeBtn.Add_MouseLeave({ $closeBtn.ForeColor = $colorSubtext })
 $closeBtn.Add_Click({ $form.Close() })
 $form.Controls.Add($closeBtn)
@@ -119,8 +119,8 @@ $closeBtn.BringToFront()
 # title
 $titleLabel = New-Object System.Windows.Forms.Label
 $titleLabel.Text = "Alt Detector"
-$titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
-$titleLabel.ForeColor = $colorPink
+$titleLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 15, [System.Drawing.FontStyle]::Bold)
+$titleLabel.ForeColor = $colorText
 $titleLabel.AutoSize = $true
 $titleLabel.Location = New-Object System.Drawing.Point(24, 20)
 $form.Controls.Add($titleLabel)
@@ -142,8 +142,8 @@ $form.Controls.Add($subLabel)
 # current file label (progress phase only)
 $fileLabel = New-Object System.Windows.Forms.Label
 $fileLabel.Text = ""
-$fileLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
-$fileLabel.ForeColor = $colorBlue
+$fileLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$fileLabel.ForeColor = $colorSubtext
 $fileLabel.AutoSize = $false
 $fileLabel.AutoEllipsis = $true
 $fileLabel.Size = New-Object System.Drawing.Size(432, 16)
@@ -152,20 +152,20 @@ $form.Controls.Add($fileLabel)
 
 # progress track (progress phase only)
 $track = New-Object System.Windows.Forms.Panel
-$track.Size = New-Object System.Drawing.Size(432, 18)
-$track.Location = New-Object System.Drawing.Point(24, 106)
+$track.Size = New-Object System.Drawing.Size(472, 10)
+$track.Location = New-Object System.Drawing.Point(24, 112)
 $track.BackColor = $colorTrack
 $track.Region = New-Object System.Drawing.Region((New-RoundedRegion -Width $track.Width -Height $track.Height -Radius 9))
 $form.Controls.Add($track)
 
 $fill = New-Object System.Windows.Forms.Panel
-$fill.Size = New-Object System.Drawing.Size(0, 18)
+$fill.Size = New-Object System.Drawing.Size(0, 10)
 $fill.Location = New-Object System.Drawing.Point(0, 0)
 $fill.Add_Paint({
     param($s, $e)
     if ($fill.Width -gt 0) {
         $rect = New-Object System.Drawing.Rectangle(0, 0, $fill.Width, $fill.Height)
-        $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $colorPink, $colorGreen, 0.0)
+        $brush = New-Object System.Drawing.SolidBrush($colorAccent)
         $e.Graphics.FillRectangle($brush, $rect)
         $brush.Dispose()
     }
@@ -177,7 +177,7 @@ $percentLabel.Text = "0%"
 $percentLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
 $percentLabel.ForeColor = $colorText
 $percentLabel.AutoSize = $true
-$percentLabel.Location = New-Object System.Drawing.Point(380, 130)
+$percentLabel.Location = New-Object System.Drawing.Point(446, 132)
 $form.Controls.Add($percentLabel)
 
 function Update-ProgressWindow {
@@ -310,7 +310,7 @@ $percentLabel.Visible = $false
 # repurpose the subtitle as the results summary line
 if ($results.Count -gt 0) {
     $subLabel.Text = "$($results.Count) unique username(s) found"
-    $subLabel.ForeColor = $colorGreen
+    $subLabel.ForeColor = $colorText
 } else {
     $subLabel.Text = "No usernames found."
     $subLabel.ForeColor = $colorSubtext
@@ -322,7 +322,7 @@ if ($results.Count -gt 0) {
     # filter box
     $filterLabel = New-Object System.Windows.Forms.Label
     $filterLabel.Text = "Filter:"
-    $filterLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+    $filterLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
     $filterLabel.ForeColor = $colorSubtext
     $filterLabel.AutoSize = $true
     $filterLabel.Location = New-Object System.Drawing.Point(24, 80)
@@ -366,7 +366,7 @@ if ($results.Count -gt 0) {
     $dgv.ColumnHeadersHeight = 34
     $dgv.ColumnHeadersBorderStyle = [System.Windows.Forms.DataGridViewHeaderBorderStyle]::None
     $dgv.ColumnHeadersDefaultCellStyle.BackColor = $colorPanel
-    $dgv.ColumnHeadersDefaultCellStyle.ForeColor = $colorGreen
+    $dgv.ColumnHeadersDefaultCellStyle.ForeColor = $colorText
     $dgv.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $dgv.ColumnHeadersDefaultCellStyle.Alignment = [System.Windows.Forms.DataGridViewContentAlignment]::MiddleLeft
     $dgv.RowTemplate.Height = 28
@@ -389,7 +389,7 @@ if ($results.Count -gt 0) {
     $colUsername.DataPropertyName = "Username"
     $colUsername.HeaderText = "Username"
     $colUsername.FillWeight = 35
-    $colUsername.DefaultCellStyle.ForeColor = $colorPinkLt
+    $colUsername.DefaultCellStyle.ForeColor = $colorText
     $colUsername.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     [void]$dgv.Columns.Add($colUsername)
 
@@ -398,7 +398,7 @@ if ($results.Count -gt 0) {
     $colPath.DataPropertyName = "Path"
     $colPath.HeaderText = "Log Path"
     $colPath.FillWeight = 65
-    $colPath.DefaultCellStyle.ForeColor = $colorBlue
+    $colPath.DefaultCellStyle.ForeColor = $colorSubtext
     [void]$dgv.Columns.Add($colPath)
 
     $dgv.DataSource = $dataTable.DefaultView
@@ -415,7 +415,7 @@ if ($results.Count -gt 0) {
             if ($path) {
                 [System.Windows.Forms.Clipboard]::SetText($path)
                 $subLabel.Text = "Path copied to clipboard."
-                $subLabel.ForeColor = $colorGreen
+                $subLabel.ForeColor = $colorText
             }
         }
     })
